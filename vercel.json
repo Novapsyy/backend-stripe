@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "server/create-checkout-session.js"
+      "dest": "/create-checkout-session.js"
     }
   ]
 }
