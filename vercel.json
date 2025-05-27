@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "server/create-checkout-session.js",
+      "src": "api/create-checkout-session.js",
       "use": "@vercel/node"
     }
   ],
