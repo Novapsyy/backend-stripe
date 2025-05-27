@@ -1,54 +1,51 @@
-import cors from "cors";
 import dotenv from "dotenv";
-import express from "express";
 import Stripe from "stripe";
 
 dotenv.config();
 
-const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Fonction serverless pour Vercel
+export default async function handler(req, res) {
+  // Configuration CORS
+  res.setHeader("Access-Control-Allow-Origin", process.env.FRONTEND_URL || "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-// Route de santé pour vérifier que l'API fonctionne
-app.get("/", (req, res) => {
-  res.json({ message: "API de paiement opérationnelle" });
-});
-
-// Route pour créer une session de checkout Stripe
-app.post("/create-checkout-session", async (req, res) => {
-  const { priceId } = req.body;
-
-  // Validation basique
-  if (!priceId) {
-    return res.status(400).json({ error: "priceId est requis" });
+  // Gestion des requêtes OPTIONS (preflight CORS)
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
   }
 
-  try {
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.FRONTEND_URL}/success`,
-      cancel_url: `${process.env.FRONTEND_URL}/cancel`,
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("Erreur Stripe:", err);
-    res.status(500).json({ error: err.message });
+  // Route GET pour tester l'API
+  if (req.method === "GET") {
+    return res.json({ message: "API de paiement opérationnelle" });
   }
-});
 
-// Pour Vercel, on n'a pas besoin d'app.listen en production
-// Mais on garde la logique pour le développement local
-if (process.env.NODE_ENV !== "production") {
-  const PORT = process.env.PORT || 3001;
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  // Route POST pour créer une session de checkout
+  if (req.method === "POST") {
+    const { priceId } = req.body;
+
+    // Validation
+    if (!priceId) {
+      return res.status(400).json({ error: "priceId est requis" });
+    }
+
+    try {
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${process.env.FRONTEND_URL}/success`,
+        cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+      });
+
+      return res.json({ url: session.url });
+    } catch (err) {
+      console.error("Erreur Stripe:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Méthode non autorisée
+  return res.status(405).json({ error: "Méthode non autorisée" });
 }
-
-// Export pour Vercel (fonction serverless)
-export default (req, res) => {
-  return app(req, res);
-};
