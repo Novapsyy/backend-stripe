@@ -7,15 +7,16 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 });
 
 export default async function handler(req, res) {
-  // 🔐 Définis ici ton frontend autorisé :
-  const allowedOrigin = process.env.FRONTEND_URL; // Utilise la variable d'environnement FRONTEND_URL
+  const allowedOrigin = process.env.FRONTEND_URL; // exemple : "https://frontend-novapsy.vercel.app"
+  const origin = req.headers.origin;
 
-  // 🔧 Ajoute les headers CORS à toutes les réponses
-  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  if (origin === allowedOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // 🔁 Répondre à la requête pré-vol OPTIONS
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
