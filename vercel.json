@@ -5,11 +5,5 @@
       "src": "api/create-checkout-session.js",
       "use": "@vercel/node"
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/create-checkout-session.js"
-    }
   ]
 }
