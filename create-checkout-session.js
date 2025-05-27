@@ -2,11 +2,18 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import Stripe from "stripe";
+
 dotenv.config();
 const app = express();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Correction ici
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: "2024-04-10", // ou la version que vous utilisez
+});
+
 app.use(cors());
 app.use(express.json());
+
 app.post("/create-checkout-session", async (req, res) => {
   const { priceId } = req.body;
   try {
@@ -21,5 +28,6 @@ app.post("/create-checkout-session", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
