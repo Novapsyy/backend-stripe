@@ -14,7 +14,7 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -64,11 +64,85 @@ app.use((req, res, next) => {
 
 function getPriceFromPriceId(priceId) {
   const prices = {
+    // Adhésions
     price_1RTOTl05Uibkj68MKKJm4GdZ: 30, // Adhésion Simple
     price_1RTIcw05Uibkj68MeUnu62m8: 20, // Adhésion Pro
     price_1RTOUG05Uibkj68MH3kTQ8JC: 10, // Membre Asso
+
+    // 🔥 NOUVEAU: Formations
+    price_1RZKxz05Uibkj68MfCpirZlH: 250, // PSSM (prix de base)
+    price_1RT2Gi05Uibkj68MuYaG5HZn: 50, // VSS (prix de base)
   };
   return prices[priceId] || 0;
+}
+
+// 🔥 NOUVEAU: Fonction pour obtenir les détails d'une formation
+function getTrainingDetails(priceId) {
+  const trainings = {
+    price_1RZKxz05Uibkj68MfCpirZlH: {
+      name: "PSSM",
+      base_price: 250,
+      member_discount: 35, // 35€ de réduction pour les adhérents
+      duration: 20, // 20 heures
+      training_type: "Premiers Secours en Santé Mentale",
+    },
+    price_1RT2Gi05Uibkj68MuYaG5HZn: {
+      name: "VSS",
+      base_price: 50,
+      member_discount: 15, // 10€ de réduction pour les adhérents
+      duration: 12, // 12 heures
+      training_type: "Violences Sexistes et Sexuelles",
+    },
+  };
+  return trainings[priceId] || null;
+}
+
+// 🔥 NOUVEAU: Vérifier si l'utilisateur est adhérent
+async function checkIfUserIsMember(userId) {
+  try {
+    logWithTimestamp("info", "Vérification statut adhérent", { userId });
+
+    const { data, error } = await supabase
+      .from("users_status")
+      .select("status_id")
+      .eq("user_id", userId)
+      .in("status_id", [2, 3, 4]) // Status adhérents
+      .maybeSingle();
+
+    if (error) {
+      logWithTimestamp("error", "Erreur vérification statut adhérent", error);
+      return false;
+    }
+
+    const isMember = !!data;
+    logWithTimestamp("info", "Résultat vérification adhérent", {
+      userId,
+      isMember,
+      statusId: data?.status_id,
+    });
+    return isMember;
+  } catch (error) {
+    logWithTimestamp("error", "Erreur vérification adhérent", error);
+    return false;
+  }
+}
+
+// 🔥 NOUVEAU: Calculer le prix avec réduction
+function calculateDiscountedPrice(trainingDetails, isMember) {
+  if (!trainingDetails) return 0;
+
+  const basePrice = trainingDetails.base_price;
+  const discount = isMember ? trainingDetails.member_discount : 0;
+  const finalPrice = basePrice - discount;
+
+  logWithTimestamp("info", "Calcul prix avec réduction", {
+    basePrice,
+    discount,
+    finalPrice,
+    isMember,
+  });
+
+  return finalPrice;
 }
 
 function logWithTimestamp(level, message, data = null) {
@@ -432,14 +506,94 @@ async function createMembership(metadata, subscriptionId, session) {
   }
 }
 
+// 🔥 NOUVELLE FONCTION: Créer un achat de formation
+async function createTrainingPurchase(metadata, session) {
+  const {
+    userId,
+    trainingId,
+    priceId,
+    originalPrice,
+    discountedPrice,
+    isMember,
+  } = metadata;
+
+  logWithTimestamp("info", "=== DÉBUT CRÉATION ACHAT FORMATION ===");
+  logWithTimestamp("info", "Metadata reçues", metadata);
+
+  try {
+    // Récupérer les détails de la formation
+    const trainingDetails = getTrainingDetails(priceId);
+    if (!trainingDetails) {
+      throw new Error(`Formation non trouvée pour priceId: ${priceId}`);
+    }
+
+    // Vérifier si l'utilisateur a déjà acheté cette formation
+    const { data: existingPurchase } = await supabase
+      .from("trainings_purchase")
+      .select("purchase_id")
+      .eq("user_id", userId)
+      .eq("training_id", trainingId)
+      .single();
+
+    if (existingPurchase) {
+      logWithTimestamp("warn", "Formation déjà achetée", {
+        userId,
+        trainingId,
+      });
+      return existingPurchase;
+    }
+
+    const purchaseData = {
+      user_id: parseInt(userId),
+      training_id: trainingId,
+      purchase_date: new Date().toISOString(),
+      purchase_amount: parseFloat(discountedPrice),
+      original_price: parseFloat(originalPrice),
+      member_discount:
+        isMember === "true"
+          ? parseFloat(originalPrice) - parseFloat(discountedPrice)
+          : 0,
+      payment_method: "stripe",
+      payment_status: "paid",
+      stripe_session_id: session.id,
+      hours_purchased: trainingDetails.duration,
+      hours_consumed: 0,
+    };
+
+    logWithTimestamp("info", "Données achat formation à insérer", purchaseData);
+
+    const { data: purchase, error: purchaseError } = await supabase
+      .from("trainings_purchase")
+      .insert(purchaseData)
+      .select()
+      .single();
+
+    if (purchaseError) {
+      logWithTimestamp(
+        "error",
+        "Erreur création achat formation",
+        purchaseError
+      );
+      throw purchaseError;
+    }
+
+    logWithTimestamp("info", "Achat formation créé avec succès", purchase);
+    logWithTimestamp("info", "=== FIN CRÉATION ACHAT FORMATION - SUCCÈS ===");
+    return purchase;
+  } catch (error) {
+    logWithTimestamp("error", "=== ERREUR CRÉATION ACHAT FORMATION ===", error);
+    throw error;
+  }
+}
+
 // ========================
-// ROUTES API
+// ROUTES API - ADHÉSIONS (existantes)
 // ========================
 
 app.post("/create-checkout-session", async (req, res) => {
   const { priceId, userId, associationId, userType, statusId } = req.body;
 
-  logWithTimestamp("info", "=== DÉBUT CRÉATION SESSION ===");
+  logWithTimestamp("info", "=== DÉBUT CRÉATION SESSION ADHÉSION ===");
   logWithTimestamp("info", "Données reçues", {
     priceId,
     userId,
@@ -473,6 +627,7 @@ app.post("/create-checkout-session", async (req, res) => {
         userType: userType,
         priceId: priceId,
         statusId: statusId.toString(),
+        type: "membership", // 🔥 AJOUT: Identifier le type de transaction
       },
     });
 
@@ -483,6 +638,201 @@ app.post("/create-checkout-session", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// 🔥 NOUVELLES ROUTES - FORMATIONS
+
+// Route pour créer une session de paiement pour une formation
+app.post("/create-training-checkout", async (req, res) => {
+  const { priceId, userId, trainingId } = req.body;
+
+  logWithTimestamp("info", "=== DÉBUT CRÉATION SESSION FORMATION ===");
+  logWithTimestamp("info", "Données reçues", { priceId, userId, trainingId });
+
+  if (!priceId) return res.status(400).json({ error: "priceId manquant" });
+  if (!userId) return res.status(400).json({ error: "userId manquant" });
+  if (!trainingId)
+    return res.status(400).json({ error: "trainingId manquant" });
+
+  try {
+    // Récupérer les détails de la formation
+    const trainingDetails = getTrainingDetails(priceId);
+    if (!trainingDetails) {
+      return res.status(400).json({ error: "Formation non trouvée" });
+    }
+
+    // Vérifier si l'utilisateur est adhérent
+    const isMember = await checkIfUserIsMember(userId);
+
+    // Calculer le prix avec réduction
+    const finalPrice = calculateDiscountedPrice(trainingDetails, isMember);
+
+    // Vérifier si l'utilisateur a déjà acheté cette formation
+    const { data: existingPurchase } = await supabase
+      .from("trainings_purchase")
+      .select("purchase_id")
+      .eq("user_id", userId)
+      .eq("training_id", trainingId)
+      .single();
+
+    if (existingPurchase) {
+      return res
+        .status(400)
+        .json({ error: "Vous avez déjà acheté cette formation" });
+    }
+
+    // Créer la session Stripe
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            product_data: {
+              name: `Formation ${trainingDetails.name}`,
+              description: `${trainingDetails.training_type} - ${trainingDetails.duration} heures`,
+              metadata: {
+                training_type: trainingDetails.training_type,
+                duration: trainingDetails.duration.toString(),
+              },
+            },
+            unit_amount: Math.round(finalPrice * 100), // Convertir en centimes
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${FRONTEND_URL}/success-training?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${FRONTEND_URL}/formations`,
+      payment_method_types: ["card"],
+      metadata: {
+        userId: userId.toString(),
+        trainingId: trainingId.toString(),
+        priceId: priceId,
+        originalPrice: trainingDetails.base_price.toString(),
+        discountedPrice: finalPrice.toString(),
+        isMember: isMember.toString(),
+        type: "training_purchase", // 🔥 Identifier le type de transaction
+      },
+    });
+
+    logWithTimestamp("info", "Session Stripe formation créée avec succès", {
+      sessionId: session.id,
+      originalPrice: trainingDetails.base_price,
+      finalPrice: finalPrice,
+      discount: isMember ? trainingDetails.member_discount : 0,
+      isMember,
+    });
+
+    res.status(200).json({
+      url: session.url,
+      training_details: {
+        name: trainingDetails.name,
+        original_price: trainingDetails.base_price,
+        final_price: finalPrice,
+        discount: isMember ? trainingDetails.member_discount : 0,
+        is_member: isMember,
+      },
+    });
+  } catch (err) {
+    logWithTimestamp("error", "Erreur création session Stripe formation", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Route pour obtenir les détails d'une formation avec prix
+app.get("/training-details/:priceId/:userId", async (req, res) => {
+  const { priceId, userId } = req.params;
+
+  logWithTimestamp("info", "Récupération détails formation", {
+    priceId,
+    userId,
+  });
+
+  try {
+    const trainingDetails = getTrainingDetails(priceId);
+    if (!trainingDetails) {
+      return res.status(404).json({ error: "Formation non trouvée" });
+    }
+
+    const isMember = await checkIfUserIsMember(userId);
+    const finalPrice = calculateDiscountedPrice(trainingDetails, isMember);
+
+    res.json({
+      ...trainingDetails,
+      final_price: finalPrice,
+      discount: isMember ? trainingDetails.member_discount : 0,
+      is_member: isMember,
+    });
+  } catch (error) {
+    logWithTimestamp("error", "Erreur récupération détails formation", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour vérifier si un utilisateur a acheté une formation
+app.get("/check-training-purchase/:userId/:trainingId", async (req, res) => {
+  const { userId, trainingId } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from("trainings_purchase")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("training_id", trainingId)
+      .single();
+
+    if (error && error.code !== "PGRST116") {
+      // PGRST116 = no rows returned
+      logWithTimestamp("error", "Erreur vérification achat formation", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      purchased: !!data,
+      purchase_details: data || null,
+    });
+  } catch (error) {
+    logWithTimestamp("error", "Erreur vérification achat formation", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour traiter le succès d'un achat de formation
+app.post("/process-training-purchase", async (req, res) => {
+  const { sessionId } = req.body;
+
+  logWithTimestamp("info", "=== TRAITEMENT SUCCÈS FORMATION ===");
+  logWithTimestamp("info", "Session ID reçu", sessionId);
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    logWithTimestamp("info", "Session Stripe récupérée", {
+      id: session.id,
+      payment_status: session.payment_status,
+      mode: session.mode,
+    });
+
+    if (session.payment_status === "paid") {
+      await createTrainingPurchase(session.metadata, session);
+      logWithTimestamp(
+        "info",
+        "Achat formation créé avec succès pour la session",
+        session.id
+      );
+      res.json({ success: true, message: "Formation achetée avec succès" });
+    } else {
+      logWithTimestamp("warn", "Paiement non confirmé", session.payment_status);
+      res.status(400).json({ error: "Paiement non confirmé" });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "Erreur traitement succès formation", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========================
+// ROUTES EXISTANTES (adhésions)
+// ========================
 
 app.get("/receipt/:invoiceId", async (req, res) => {
   const { invoiceId } = req.params;
@@ -696,7 +1046,7 @@ app.post("/process-payment-success", async (req, res) => {
 });
 
 // ========================
-// ROUTES POUR GESTION DES ADHÉSIONS
+// ROUTES POUR GESTION DES ADHÉSIONS (existantes)
 // ========================
 
 // Route pour mettre à jour l'invoice ID manuellement
@@ -1357,7 +1707,7 @@ app.get("/health", (req, res) => {
   res.json({
     status: "OK",
     timestamp: new Date().toISOString(),
-    version: "9.0.0-avec-gestion-statuts",
+    version: "10.0.0-avec-formations-et-reductions",
   });
 });
 
@@ -1385,22 +1735,29 @@ app.post("/webhook", async (req, res) => {
         logWithTimestamp("info", "Session checkout complétée", session.id);
 
         try {
-          await createMembership(
-            session.metadata,
-            session.subscription,
-            session
-          );
-          logWithTimestamp(
-            "info",
-            "Adhésion créée avec succès via webhook",
-            session.id
-          );
+          // 🔥 MODIFICATION: Vérifier le type de transaction
+          if (session.metadata.type === "training_purchase") {
+            await createTrainingPurchase(session.metadata, session);
+            logWithTimestamp(
+              "info",
+              "Achat formation créé avec succès via webhook",
+              session.id
+            );
+          } else {
+            // Adhésion (comportement existant)
+            await createMembership(
+              session.metadata,
+              session.subscription,
+              session
+            );
+            logWithTimestamp(
+              "info",
+              "Adhésion créée avec succès via webhook",
+              session.id
+            );
+          }
         } catch (error) {
-          logWithTimestamp(
-            "error",
-            "Erreur création adhésion via webhook",
-            error
-          );
+          logWithTimestamp("error", "Erreur création via webhook", error);
         }
         break;
 
@@ -1509,6 +1866,6 @@ app.listen(PORT, () => {
   );
   logWithTimestamp(
     "info",
-    `✅ Version: Gestion automatique des statuts utilisateurs (v9.0.0)`
+    `✅ Version: Gestion formations avec réductions adhérents (v10.0.0)`
   );
 });
