@@ -21,7 +21,7 @@ const supabase = createClient(
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const FROM_EMAIL = process.env.FROM_EMAIL || "onboarding@resend.dev";
+const FROM_EMAIL = process.env.FROM_EMAIL || "contact@novapsy.info";
 
 // ========================
 // MIDDLEWARES
