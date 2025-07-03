@@ -2086,6 +2086,420 @@ app.get("/api/debug-prevention-config", (req, res) => {
   }
 });
 
+// ========================
+// ROUTE API - FORMULAIRE DE CONTACT
+// ========================
+
+app.post("/api/send-contact-message", async (req, res) => {
+  const { to, subject, contactData } = req.body;
+
+  logWithTimestamp("info", "=== NOUVEAU MESSAGE DE CONTACT ===");
+  logWithTimestamp("info", "Données reçues", {
+    to,
+    subject,
+    nom: contactData?.nom,
+    prenom: contactData?.prenom,
+    email: contactData?.email,
+    telephone: contactData?.telephone,
+  });
+
+  // Validation des données essentielles
+  if (!to || !subject || !contactData) {
+    logWithTimestamp("error", "Paramètres manquants", {
+      to,
+      subject,
+      hasContactData: !!contactData,
+    });
+    return res.status(400).json({
+      error: "Paramètres manquants (to, subject, contactData requis)",
+    });
+  }
+
+  // Validation des champs obligatoires
+  const requiredFields = ["nom", "prenom", "telephone", "email", "message"];
+  const missingFields = requiredFields.filter(
+    (field) => !contactData[field] || contactData[field].trim() === ""
+  );
+
+  if (missingFields.length > 0) {
+    logWithTimestamp("error", "Champs obligatoires manquants", {
+      missingFields,
+    });
+    return res.status(400).json({
+      error: `Champs obligatoires manquants: ${missingFields.join(", ")}`,
+    });
+  }
+
+  // Validation du format email
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(contactData.email)) {
+    logWithTimestamp("error", "Format email invalide", {
+      email: contactData.email,
+    });
+    return res.status(400).json({
+      error: "Format d'email invalide",
+    });
+  }
+
+  // Validation du téléphone
+  const phoneRegex = /^[\d\s\-\+\(\)\.]+$/;
+  if (!phoneRegex.test(contactData.telephone)) {
+    logWithTimestamp("error", "Format téléphone invalide", {
+      telephone: contactData.telephone,
+    });
+    return res.status(400).json({
+      error: "Format de téléphone invalide",
+    });
+  }
+
+  try {
+    // Construction de l'email HTML
+    const html = `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Nouveau Message de Contact</title>
+      </head>
+      <body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
+            
+            <!-- Header -->
+            <div style="text-align: center; margin-bottom: 40px; padding-bottom: 30px; border-bottom: 3px solid #4f46e5;">
+              <h1 style="color: #1f2937; margin: 0 0 15px 0; font-size: 28px; font-weight: bold;">
+                📧 Nouveau Message de Contact
+              </h1>
+              <p style="color: #6b7280; margin: 0; font-size: 18px; font-weight: 500;">
+                Site Web Novapsy
+              </p>
+              <p style="color: #9ca3af; margin: 10px 0 0 0; font-size: 14px;">
+                Message reçu le ${new Date(
+                  contactData.timestamp
+                ).toLocaleDateString("fr-FR", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </p>
+            </div>
+
+            <!-- Informations du contact -->
+            <div style="margin-bottom: 35px;">
+              <h2 style="color: #4f46e5; font-size: 20px; margin-bottom: 20px; display: flex; align-items: center;">
+                👤 Informations du contact
+              </h2>
+              
+              <div style="background-color: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #334155; width: 140px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      👤 Nom
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-size: 16px;">
+                      ${contactData.nom}
+                    </td>
+                  </tr>
+                  
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      👤 Prénom
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-size: 16px;">
+                      ${contactData.prenom}
+                    </td>
+                  </tr>
+                  
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      📧 Email
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-size: 16px;">
+                      <a href="mailto:${contactData.email}" style="color: #4f46e5; text-decoration: none;">${contactData.email}</a>
+                    </td>
+                  </tr>
+                  
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; font-weight: 700; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      📞 Téléphone
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; color: #1e293b; font-size: 16px;">
+                      <a href="tel:${contactData.telephone}" style="color: #4f46e5; text-decoration: none;">${contactData.telephone}</a>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+
+            <!-- Message -->
+            <div style="margin-bottom: 35px;">
+              <h2 style="color: #4f46e5; font-size: 20px; margin-bottom: 20px;">
+                💬 Message
+              </h2>
+              <div style="background-color: #f0f9ff; padding: 25px; border-radius: 12px; border-left: 4px solid #0ea5e9;">
+                <p style="margin: 0; line-height: 1.8; color: #1e293b; font-size: 16px; white-space: pre-wrap;">${contactData.message}</p>
+              </div>
+            </div>
+
+            <!-- Actions recommandées -->
+            <div style="background-color: #fef3cd; border: 1px solid #fbbf24; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+              <h4 style="margin: 0 0 10px 0; color: #92400e; font-size: 16px;">
+                ⚡ Actions recommandées
+              </h4>
+              <ul style="margin: 0; padding-left: 20px; color: #92400e; line-height: 1.6;">
+                <li>Répondre dans les 24h maximum</li>
+                <li>Contacter par téléphone si urgent : <strong>${contactData.telephone}</strong></li>
+                <li>Envoyer une réponse personnalisée à : <strong>${contactData.email}</strong></li>
+                <li>Ajouter le contact à votre CRM si applicable</li>
+              </ul>
+            </div>
+
+            <!-- Boutons d'action -->
+            <div style="text-align: center; margin: 30px 0;">
+              <div style="display: inline-block; margin: 0 10px;">
+                <a href="mailto:${contactData.email}?subject=Re: ${encodeURIComponent(subject)}" 
+                   style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+                  📧 Répondre par Email
+                </a>
+              </div>
+              <div style="display: inline-block; margin: 0 10px;">
+                <a href="tel:${contactData.telephone}" 
+                   style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+                  📞 Appeler
+                </a>
+              </div>
+            </div>
+
+            <!-- Résumé -->
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); padding: 25px; border-radius: 12px; margin-bottom: 30px;">
+              <h3 style="margin: 0 0 15px 0; color: #374151; font-size: 18px;">
+                📊 Résumé du contact
+              </h3>
+              <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                <span style="background-color: #4f46e5; color: white; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                  ${contactData.nom} ${contactData.prenom}
+                </span>
+                <span style="background-color: #059669; color: white; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                  ${contactData.email}
+                </span>
+                <span style="background-color: #dc2626; color: white; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                  ${contactData.telephone}
+                </span>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div style="text-align: center; margin-top: 40px; padding-top: 30px; border-top: 2px solid #e5e7eb;">
+              <p style="color: #6b7280; font-size: 14px; margin: 0 0 10px 0;">
+                <strong>Message généré automatiquement</strong><br>
+                Formulaire de Contact - Site Web Novapsy
+              </p>
+              <p style="color: #9ca3af; font-size: 12px; margin: 0;">
+                Source: ${contactData.source || "contact_form"} | 
+                ID: ${contactData.timestamp ? new Date(contactData.timestamp).getTime() : Date.now()}
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Envoi de l'email via la fonction existante
+    logWithTimestamp("info", "Tentative d'envoi email de contact", {
+      to,
+      subject,
+    });
+
+    const emailSent = await sendEmail(to, subject, html);
+
+    if (emailSent) {
+      logWithTimestamp("info", "✅ Message de contact envoyé par email", {
+        to,
+        nom: contactData.nom,
+        prenom: contactData.prenom,
+        email: contactData.email,
+        telephone: contactData.telephone,
+        messageLength: contactData.message.length,
+      });
+
+      res.json({
+        success: true,
+        message: "Message de contact envoyé avec succès",
+        data: {
+          nom: contactData.nom,
+          prenom: contactData.prenom,
+          email: contactData.email,
+          timestamp: contactData.timestamp,
+          emailSentTo: to,
+        },
+      });
+    } else {
+      logWithTimestamp("error", "❌ Échec envoi email message de contact", {
+        to,
+        nom: contactData.nom,
+        prenom: contactData.prenom,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: "Erreur lors de l'envoi de l'email",
+      });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "❌ Erreur traitement message de contact", {
+      error: error.message,
+      stack: error.stack,
+      to,
+      nom: contactData?.nom,
+      prenom: contactData?.prenom,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: "Erreur interne lors du traitement du message",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+});
+
+// ========================
+// ROUTE DE TEST POUR LE FORMULAIRE DE CONTACT
+// ========================
+
+app.post("/api/test-contact-email", async (req, res) => {
+  try {
+    logWithTimestamp("info", "=== TEST EMAIL CONTACT ===");
+
+    const testData = {
+      nom: "Dupont",
+      prenom: "Jean",
+      telephone: "01 23 45 67 89",
+      email: "jean.dupont@exemple.com",
+      message: `Bonjour,
+
+Je souhaite obtenir des informations sur vos formations en psychologie.
+Pourriez-vous me contacter pour discuter de mes besoins ?
+
+Merci d'avance.
+
+Cordialement,
+Jean Dupont`,
+      timestamp: new Date().toISOString(),
+      source: "contact_form_test",
+    };
+
+    // Utiliser la même logique que la route principale
+    const subject = `TEST - Nouveau message de contact - ${testData.nom} ${testData.prenom}`;
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
+        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <h2 style="color: #333; text-align: center; margin-bottom: 30px;">🧪 TEST - Message de Contact</h2>
+          
+          <div style="margin-bottom: 20px;">
+            <h3 style="color: #555;">Informations du contact :</h3>
+            <p><strong>Nom :</strong> ${testData.nom}</p>
+            <p><strong>Prénom :</strong> ${testData.prenom}</p>
+            <p><strong>Email :</strong> ${testData.email}</p>
+            <p><strong>Téléphone :</strong> ${testData.telephone}</p>
+          </div>
+          
+          <div style="margin-bottom: 20px;">
+            <h3 style="color: #555;">Message :</h3>
+            <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; white-space: pre-wrap;">${testData.message}</div>
+          </div>
+          
+          <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+            <p style="color: #666; font-size: 12px;">
+              Email de test généré le ${new Date().toLocaleString("fr-FR")}
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const emailSent = await sendEmail(
+      "contact@novapsy.info.test-google-a.com",
+      subject,
+      html
+    );
+
+    if (emailSent) {
+      logWithTimestamp("info", "✅ Email de test contact envoyé avec succès");
+      res.json({
+        success: true,
+        message: "Email de test contact envoyé avec succès",
+        timestamp: new Date().toISOString(),
+        testData: testData,
+      });
+    } else {
+      logWithTimestamp("error", "❌ Échec envoi email de test contact");
+      res.status(500).json({
+        success: false,
+        error: "Échec envoi email de test contact",
+      });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "❌ Erreur test email contact", {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ========================
+// ROUTE DE DEBUG POUR LE FORMULAIRE DE CONTACT
+// ========================
+
+app.get("/api/debug-contact-config", (req, res) => {
+  try {
+    const config = {
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development",
+      email: {
+        configured: !!process.env.RESEND_API_KEY,
+        fromEmail: process.env.FROM_EMAIL || "Non configuré",
+        targetEmail: "contact@novapsy.info.test-google-a.com",
+      },
+      routes: {
+        contactMessage: "/api/send-contact-message",
+        testContactEmail: "/api/test-contact-email",
+        debugConfig: "/api/debug-contact-config",
+      },
+      validation: {
+        requiredFields: ["nom", "prenom", "telephone", "email", "message"],
+        emailRegex: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+        phoneRegex: "^[\\d\\s\\-\\+\\(\\)\\.]+$",
+      },
+    };
+
+    logWithTimestamp("info", "Configuration debug contact demandée", config);
+
+    res.json({
+      success: true,
+      message: "Configuration de debug du formulaire de contact",
+      config: config,
+    });
+  } catch (error) {
+    logWithTimestamp("error", "Erreur debug configuration contact", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 app.use("*", (req, res) => {
   res.status(404).json({ error: "Route non trouvée" });
 });
