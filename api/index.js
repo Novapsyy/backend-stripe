@@ -11,6 +11,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 
 // Initialisation Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
+resend.domains.create({ name: "novapsy.info" });
 
 // Initialisation Supabase
 const supabase = createClient(
@@ -21,7 +22,7 @@ const supabase = createClient(
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const FROM_EMAIL = process.env.FROM_EMAIL || "contact@novapsy.info";
+const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@novapsy.info";
 
 // ========================
 // MIDDLEWARES
@@ -777,7 +778,7 @@ async function createMembership(metadata, subscriptionId, session) {
       await updateUserStatusToMembership(userId, statusId);
 
       // Envoi de l'email de confirmation d'adhésion
-      await sendMembershipConfirmationEmail(userId, membership);
+      //await sendMembershipConfirmationEmail(userId, membership);
     } else if (userType === "association" && associationId) {
       const { data: assoMembership, error: assoMembershipError } =
         await supabase
@@ -1640,6 +1641,449 @@ app.use((err, req, res, next) => {
         ? err.message
         : "Une erreur est survenue",
   });
+});
+
+// ========================
+// ROUTE API - DEMANDES DE PRÉVENTION (VERSION COMPLÈTE)
+// ========================
+
+function getCategoryGradient(categoryName) {
+  const categoryLower = categoryName.toLowerCase();
+
+  if (categoryLower.includes("psycho")) {
+    return "linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)"; // Violet
+  } else if (
+    categoryLower.includes("sexualité") ||
+    categoryLower.includes("sexualite")
+  ) {
+    return "linear-gradient(135deg, #ec4899 0%, #f472b6 100%)"; // Rose
+  } else if (categoryLower.includes("handicap")) {
+    return "linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)"; // Bleu foncé
+  } else {
+    return "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)"; // Couleur par défaut
+  }
+}
+
+app.post("/api/send-prevention-request", async (req, res) => {
+  const { to, subject, requestData } = req.body;
+
+  logWithTimestamp("info", "=== NOUVELLE DEMANDE DE PRÉVENTION ===");
+  logWithTimestamp("info", "Données reçues", {
+    to,
+    subject,
+    category: requestData?.category?.nom,
+    dates: requestData?.dates,
+    lieu: requestData?.lieu,
+    publicConcerne: requestData?.publicConcerne,
+  });
+
+  // Validation des données essentielles
+  if (!to || !subject || !requestData) {
+    logWithTimestamp("error", "Paramètres manquants", {
+      to,
+      subject,
+      hasRequestData: !!requestData,
+    });
+    return res.status(400).json({
+      error: "Paramètres manquants (to, subject, requestData requis)",
+    });
+  }
+
+  if (!requestData.category || !requestData.category.nom) {
+    logWithTimestamp("error", "Catégorie manquante", requestData);
+    return res.status(400).json({
+      error: "Catégorie de prévention requise",
+    });
+  }
+
+  // Validation des champs obligatoires
+  const requiredFields = ["dates", "durees", "lieu", "publicConcerne"];
+  const missingFields = requiredFields.filter(
+    (field) => !requestData[field] || requestData[field].trim() === ""
+  );
+
+  if (missingFields.length > 0) {
+    logWithTimestamp("error", "Champs obligatoires manquants", {
+      missingFields,
+    });
+    return res.status(400).json({
+      error: `Champs obligatoires manquants: ${missingFields.join(", ")}`,
+    });
+  }
+
+  try {
+    // Construction de l'email HTML complet
+    const html = `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Demande de Prévention</title>
+      </head>
+      <body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
+            
+            <!-- Header -->
+            <div style="text-align: center; margin-bottom: 40px; padding-bottom: 30px; border-bottom: 3px solid #6366f1;">
+              <h1 style="color: #1f2937; margin: 0 0 15px 0; font-size: 28px; font-weight: bold;">
+                🎯 Nouvelle Demande de Prévention
+              </h1>
+              <p style="color: #6b7280; margin: 0; font-size: 18px; font-weight: 500;">
+                Catalogue des Préventions Novapsy
+              </p>
+              <p style="color: #9ca3af; margin: 10px 0 0 0; font-size: 14px;">
+                Demande reçue le ${new Date(
+                  requestData.timestamp
+                ).toLocaleDateString("fr-FR", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </p>
+            </div>
+
+            <!-- Type de formation -->
+            <div style="margin-bottom: 35px;">
+              <h2 style="color: #4f46e5; font-size: 20px; margin-bottom: 20px; display: flex; align-items: center;">
+                🎯 Type de formation demandé
+              </h2>
+              <div style="background: ${getCategoryGradient(requestData.category.nom)}; padding: 25px; border-radius: 12px; color: white;">                
+                <h3 style="margin: 0 0 10px 0; font-size: 22px; font-weight: bold;">
+                  ${requestData.category.nom}
+                </h3>
+                ${
+                  requestData.category.description
+                    ? `
+                <p style="margin: 0; font-size: 16px; opacity: 0.95; line-height: 1.5;">
+                  ${requestData.category.description}
+                </p>
+                `
+                    : ""
+                }
+              </div>
+            </div>
+
+            <!-- Détails de la formation -->
+            <div style="margin-bottom: 35px;">
+              <h2 style="color: #4f46e5; font-size: 20px; margin-bottom: 20px; display: flex; align-items: center;">
+                📋 Détails de la formation
+              </h2>
+              
+              <div style="background-color: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #334155; width: 180px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      📅 Dates souhaitées
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-size: 16px;">
+                      ${requestData.dates}
+                    </td>
+                  </tr>
+                  
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      ⏱️ Durées
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-size: 16px;">
+                      ${requestData.durees}
+                    </td>
+                  </tr>
+                  
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      📍 Lieu
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-size: 16px;">
+                      ${requestData.lieu}
+                    </td>
+                  </tr>
+                  
+                  <tr>
+                    <td style="padding: 18px 25px; background-color: #f1f5f9; font-weight: 700; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">
+                      👥 Public concerné
+                    </td>
+                    <td style="padding: 18px 25px; background-color: white; color: #1e293b; font-size: 16px;">
+                      ${requestData.publicConcerne}
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+
+            <!-- Personnalisation optionnelle -->
+            ${
+              requestData.thematiquesEnvisagees || requestData.formeEnvisagee
+                ? `
+            <div style="margin-bottom: 35px;">
+              <h2 style="color: #4f46e5; font-size: 20px; margin-bottom: 20px;">
+                🔧 Personnalisation demandée
+              </h2>
+              
+              ${
+                requestData.thematiquesEnvisagees
+                  ? `
+              <div style="margin-bottom: 20px; background-color: #eff6ff; padding: 20px; border-radius: 10px; border-left: 4px solid #3b82f6;">
+                <h4 style="margin: 0 0 12px 0; color: #1e40af; font-size: 16px; font-weight: 600;">
+                  🎯 Thématiques envisagées
+                </h4>
+                <p style="margin: 0; color: #1e293b; line-height: 1.6; font-style: italic; font-size: 15px;">
+                  "${requestData.thematiquesEnvisagees}"
+                </p>
+              </div>
+              `
+                  : ""
+              }
+              
+              ${
+                requestData.formeEnvisagee
+                  ? `
+              <div style="background-color: #f0fdf4; padding: 20px; border-radius: 10px; border-left: 4px solid #10b981;">
+                <h4 style="margin: 0 0 12px 0; color: #047857; font-size: 16px; font-weight: 600;">
+                  📝 Forme envisagée
+                </h4>
+                <p style="margin: 0; color: #1e293b; line-height: 1.6; font-style: italic; font-size: 15px;">
+                  "${requestData.formeEnvisagee}"
+                </p>
+              </div>
+              `
+                  : ""
+              }
+            </div>
+            `
+                : ""
+            }
+
+            <!-- Message complémentaire -->
+            ${
+              requestData.message
+                ? `
+            <div style="margin-bottom: 35px;">
+              <h2 style="color: #4f46e5; font-size: 20px; margin-bottom: 20px;">
+                💬 Message complémentaire
+              </h2>
+              <div style="background-color: #fefce8; padding: 25px; border-radius: 12px; border-left: 4px solid #eab308;">
+                <p style="margin: 0; line-height: 1.8; color: #1e293b; font-size: 16px; font-style: italic;">
+                  "${requestData.message}"
+                </p>
+              </div>
+            </div>
+            `
+                : ""
+            }
+
+            <!-- Résumé et actions -->
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); padding: 25px; border-radius: 12px; margin-bottom: 30px;">
+              <h3 style="margin: 0 0 15px 0; color: #374151; font-size: 18px;">
+                📊 Résumé de la demande
+              </h3>
+              <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                <span style="background-color: #6366f1; color: white; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                  ${requestData.category.nom}
+                </span>
+                <span style="background-color: #10b981; color: white; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                  ${requestData.lieu}
+                </span>
+                <span style="background-color: #f59e0b; color: white; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                  ${requestData.durees}
+                </span>
+              </div>
+            </div>
+
+            <!-- Instructions pour le suivi -->
+            <div style="background-color: #fef3cd; border: 1px solid #fbbf24; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+              <h4 style="margin: 0 0 10px 0; color: #92400e; font-size: 16px;">
+                ⚠️ Prochaines étapes
+              </h4>
+              <ul style="margin: 0; padding-left: 20px; color: #92400e; line-height: 1.6;">
+                <li>Analyser la faisabilité de la demande</li>
+                <li>Préparer un devis personnalisé</li>
+                <li>Planifier un contact avec le demandeur</li>
+                <li>Proposer des créneaux de formation</li>
+              </ul>
+            </div>
+
+            <!-- Footer -->
+            <div style="text-align: center; margin-top: 40px; padding-top: 30px; border-top: 2px solid #e5e7eb;">
+              <p style="color: #6b7280; font-size: 14px; margin: 0 0 10px 0;">
+                <strong>Demande générée automatiquement</strong><br>
+                Catalogue des Préventions Novapsy
+              </p>
+              <p style="color: #9ca3af; font-size: 12px; margin: 0;">
+                Source: ${requestData.source || "prevention_catalog"} | 
+                ID: ${requestData.timestamp ? new Date(requestData.timestamp).getTime() : Date.now()}
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Envoi de l'email via la fonction existante
+    logWithTimestamp("info", "Tentative d'envoi email", { to, subject });
+
+    const emailSent = await sendEmail(to, subject, html);
+
+    if (emailSent) {
+      logWithTimestamp("info", "✅ Demande de prévention envoyée par email", {
+        to,
+        category: requestData.category.nom,
+        dates: requestData.dates,
+        lieu: requestData.lieu,
+        publicConcerne: requestData.publicConcerne,
+        hasCustomization: !!(
+          requestData.thematiquesEnvisagees || requestData.formeEnvisagee
+        ),
+        hasMessage: !!requestData.message,
+      });
+
+      res.json({
+        success: true,
+        message: "Demande de prévention envoyée avec succès",
+        data: {
+          category: requestData.category.nom,
+          dates: requestData.dates,
+          lieu: requestData.lieu,
+          timestamp: requestData.timestamp,
+          emailSentTo: to,
+        },
+      });
+    } else {
+      logWithTimestamp("error", "❌ Échec envoi email demande de prévention", {
+        to,
+        category: requestData.category.nom,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: "Erreur lors de l'envoi de l'email",
+      });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "❌ Erreur traitement demande de prévention", {
+      error: error.message,
+      stack: error.stack,
+      to,
+      category: requestData?.category?.nom,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: "Erreur interne lors du traitement de la demande",
+      details:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+});
+
+// ========================
+// ROUTE DE TEST POUR LES EMAILS DE PRÉVENTION
+// ========================
+
+app.post("/api/test-prevention-email", async (req, res) => {
+  try {
+    logWithTimestamp("info", "=== TEST EMAIL PRÉVENTION ===");
+
+    const testData = {
+      dates: "Semaine du 15 janvier 2025",
+      durees: "2 jours (14 heures)",
+      lieu: "Paris - Centre de formation",
+      publicConcerne: "Professionnels de santé",
+      thematiquesEnvisagees:
+        "Gestion du stress en milieu hospitalier, techniques de relaxation",
+      formeEnvisagee: "Ateliers pratiques avec mises en situation",
+      message:
+        "Formation urgente pour notre équipe suite à une réorganisation du service.",
+      category: {
+        nom: "Psychologie",
+        description:
+          "Accompagnement psychologique personnalisé pour votre bien-être mental et émotionnel.",
+      },
+      timestamp: new Date().toISOString(),
+      source: "prevention_catalog_test",
+    };
+
+    // Utiliser la même logique que la route principale
+    const html = `Test HTML simple pour ${testData.category.nom} - ${new Date().toLocaleString("fr-FR")}`;
+
+    const emailSent = await sendEmail(
+      "contact@novapsy.info",
+      "Test - Demande de prévention",
+      html
+    );
+
+    if (emailSent) {
+      logWithTimestamp("info", "✅ Email de test envoyé avec succès");
+      res.json({
+        success: true,
+        message: "Email de test envoyé avec succès",
+        timestamp: new Date().toISOString(),
+        testData: testData,
+      });
+    } else {
+      logWithTimestamp("error", "❌ Échec envoi email de test");
+      res.status(500).json({
+        success: false,
+        error: "Échec envoi email de test",
+      });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "❌ Erreur test email prévention", {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ========================
+// ROUTE DE DEBUG POUR VÉRIFIER LA CONFIGURATION
+// ========================
+
+app.get("/api/debug-prevention-config", (req, res) => {
+  try {
+    const config = {
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development",
+      resend: {
+        configured: !!process.env.RESEND_API_KEY,
+        fromEmail: process.env.FROM_EMAIL || "Non configuré",
+      },
+      routes: {
+        preventionRequest: "/api/send-prevention-request",
+        testEmail: "/api/test-prevention-email",
+        debug: "/api/debug-prevention-config",
+      },
+      server: {
+        port: process.env.PORT || 3001,
+        frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+      },
+    };
+
+    logWithTimestamp("info", "Configuration debug demandée", config);
+
+    res.json({
+      success: true,
+      message: "Configuration de debug récupérée",
+      config: config,
+    });
+  } catch (error) {
+    logWithTimestamp("error", "Erreur debug configuration", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
 });
 
 app.use("*", (req, res) => {
