@@ -19,9 +19,6 @@ app.use(
       "http://localhost:3000",
       "https://novapsy.fr",
       "https://www.novapsy.fr",
-      "https://novapsy-frontend.vercel.app",
-      "https://novapsy-frontend-git-main-luclemaires-projects.vercel.app",
-      "https://novapsy-frontend-luclemaires-projects.vercel.app",
     ],
     credentials: true,
   })
@@ -43,7 +40,7 @@ app.use("/api", utilityRoutes);
 app.get("/", (req, res) => {
   res.json({
     message: "API Novapsy - Backend Stripe",
-    version: "2.0.0-refactored-vercel",
+    version: "2.0.0-refactored",
     endpoints: {
       membership: [
         "POST /api/create-checkout-session",
@@ -94,12 +91,9 @@ app.use("*", (req, res) => {
   });
 });
 
-// Export pour Vercel (fonction serverless)
-module.exports = app;
+const PORT = process.env.PORT || 3001;
 
-// Démarrage du serveur en local uniquement
 if (require.main === module) {
-  const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => {
     logWithTimestamp("info", `🚀 Serveur démarré sur le port ${PORT}`);
     logWithTimestamp("info", "📋 Routes disponibles:");
@@ -116,3 +110,5 @@ if (require.main === module) {
     );
   });
 }
+
+module.exports = app;
