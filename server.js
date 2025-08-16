@@ -1,30 +1,26 @@
 require("dotenv").config();
 const express = require("express");
-const Stripe = require("stripe");
-const { createClient } = require("@supabase/supabase-js");
-const { Resend } = require("resend");
+
+// Configuration imports
+const { PORT, FRONTEND_URL, WEBHOOK_SECRET } = require("./config/constants");
+const { supabase } = require("./config/database");
+const { resend, FROM_EMAIL, CONTACT_EMAIL } = require("./config/email");
+const { stripe } = require("./config/stripe");
+
+// Shared utilities imports
+const { logWithTimestamp } = require("./shared/logger");
+const {
+  getPriceFromPriceId,
+  getTrainingDetails,
+  calculateDiscountedPrice,
+} = require("./shared/pricing");
+const {
+  corsMiddleware,
+  errorHandler,
+  notFoundHandler,
+} = require("./shared/middleware");
 
 const app = express();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2024-04-10",
-});
-
-// Initialisation des services externes
-const resend = new Resend(process.env.RESEND_API_KEY);
-resend.domains.create({ name: "novapsy.info" });
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-// Configuration du serveur
-const PORT = process.env.PORT || 3001;
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
-const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@novapsy.info";
-const CONTACT_EMAIL =
-  process.env.CONTACT_EMAIL || "contact@novapsy.info.test-google-a.com";
 
 // ========================
 // MIDDLEWARES
@@ -34,84 +30,11 @@ app.use("/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 // Configuration CORS
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowedOrigins = [
-    process.env.FRONTEND_URL,
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-  ];
-
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, OPTIONS"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With"
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  next();
-});
+app.use(corsMiddleware);
 
 // ========================
 // UTILITAIRES DE BASE
 // ========================
-
-/**
- * Récupère le prix d'un produit à partir de son ID Stripe
- * @param {string} priceId - ID du prix Stripe
- * @returns {number} Prix en euros
- */
-function getPriceFromPriceId(priceId) {
-  const prices = {
-    // Adhésions forfait unique (1 an)
-    price_1RknRO05Uibkj68MUPgVuW2Y: 30, // Adhésion Simple
-    price_1RknR205Uibkj68MeezgOEAs: 20, // Adhésion Pro
-    price_1RknQd05Uibkj68MgNOg2UxF: 10, // Membre Asso
-
-    // Formations
-    price_1RZKxz05Uibkj68MfCpirZlH: 250, // PSSM
-    price_1RT2Gi05Uibkj68MuYaG5HZn: 50, // VSS
-  };
-  return prices[priceId] || 0;
-}
-
-/**
- * Récupère les détails d'une formation à partir de son ID de prix
- * @param {string} priceId - ID du prix Stripe pour la formation
- * @returns {object|null} Détails de la formation ou null si non trouvée
- */
-function getTrainingDetails(priceId) {
-  const trainings = {
-    price_1RZKxz05Uibkj68MfCpirZlH: {
-      name: "PSSM",
-      full_name: "Premiers Secours en Santé Mentale",
-      base_price: 250,
-      member_discount: 35,
-      duration: 20,
-      training_type: "Premiers Secours en Santé Mentale",
-    },
-    price_1RT2Gi05Uibkj68MuYaG5HZn: {
-      name: "VSS",
-      full_name: "Violences Sexistes et Sexuelles",
-      base_price: 50,
-      member_discount: 15,
-      duration: 12,
-      training_type: "Violences Sexistes et Sexuelles",
-    },
-  };
-  return trainings[priceId] || null;
-}
 
 /**
  * Vérifie si un utilisateur est adhérent actif
@@ -146,50 +69,6 @@ async function checkIfUserIsMember(userId) {
     return false;
   }
 }
-
-/**
- * Calcule le prix final d'une formation avec réduction adhérent
- * @param {object} trainingDetails - Détails de la formation
- * @param {boolean} isMember - Si l'utilisateur est adhérent
- * @returns {number} Prix final après réduction
- */
-function calculateDiscountedPrice(trainingDetails, isMember) {
-  if (!trainingDetails) return 0;
-
-  const basePrice = trainingDetails.base_price;
-  const discount = isMember ? trainingDetails.member_discount : 0;
-  const finalPrice = basePrice - discount;
-
-  logWithTimestamp("info", "Calcul prix avec réduction", {
-    basePrice,
-    discount,
-    finalPrice,
-    isMember,
-  });
-
-  return finalPrice;
-}
-
-/**
- * Utilitaire de logging avec timestamp
- * @param {string} level - Niveau de log (info, error, warn)
- * @param {string} message - Message à logger
- * @param {object} data - Données supplémentaires
- */
-function logWithTimestamp(level, message, data = null) {
-  const timestamp = new Date().toISOString();
-  const logMessage = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
-
-  if (level === "error") {
-    console.error(logMessage, data || "");
-  } else {
-    console.log(logMessage, data || "");
-  }
-}
-
-// ========================
-// FONCTIONS EMAIL
-// ========================
 
 /**
  * Récupère l'email d'un utilisateur par son ID
@@ -278,128 +157,6 @@ async function sendEmail(to, subject, html) {
 }
 
 /**
- * Envoie un email de confirmation d'adhésion
- * @param {string} userId - UUID de l'utilisateur
- * @param {object} membershipData - Données de l'adhésion
- * @returns {Promise<boolean>} Succès de l'envoi
- */
-async function sendMembershipConfirmationEmail(userId, membershipData) {
-  try {
-    const userEmail = await getMailByUser(userId);
-    if (!userEmail) {
-      logWithTimestamp(
-        "warn",
-        "Email utilisateur non trouvé pour confirmation adhésion",
-        { userId }
-      );
-      return false;
-    }
-
-    const subject = "Confirmation de votre adhésion";
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Bienvenue ! Votre adhésion est confirmée</h2>
-        
-        <p>Nous sommes ravis de vous confirmer que votre adhésion a été activée avec succès.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="margin-top: 0; color: #333;">Détails de votre adhésion :</h3>
-          <p><strong>Prix :</strong> ${membershipData.membership_price}€</p>
-          <p><strong>Début :</strong> ${new Date(
-            membershipData.membership_start
-          ).toLocaleDateString("fr-FR")}</p>
-          <p><strong>Fin :</strong> ${new Date(
-            membershipData.membership_end
-          ).toLocaleDateString("fr-FR")}</p>
-        </div>
-        
-        <p>Vous pouvez maintenant profiter de tous les avantages de votre adhésion, notamment les réductions sur nos formations.</p>
-        <p><strong>Important :</strong> Votre adhésion est valable exactement un an. Vous recevrez des notifications avant expiration pour renouveler si vous le souhaitez.</p>
-        
-        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
-        
-        <p>Cordialement,<br>L'équipe Novapsy</p>
-      </div>
-    `;
-
-    return await sendEmail(userEmail, subject, html);
-  } catch (error) {
-    logWithTimestamp("error", "Erreur envoi email confirmation adhésion", {
-      userId,
-      error: error.message,
-    });
-    return false;
-  }
-}
-
-/**
- * Envoie un email de confirmation d'achat de formation
- * @param {string} userId - UUID de l'utilisateur
- * @param {object} purchaseData - Données de l'achat
- * @param {object} trainingDetails - Détails de la formation
- * @returns {Promise<boolean>} Succès de l'envoi
- */
-async function sendTrainingPurchaseConfirmationEmail(
-  userId,
-  purchaseData,
-  trainingDetails
-) {
-  try {
-    const userEmail = await getMailByUser(userId);
-    if (!userEmail) {
-      logWithTimestamp(
-        "warn",
-        "Email utilisateur non trouvé pour confirmation formation",
-        { userId }
-      );
-      return false;
-    }
-
-    const subject = `Confirmation d'achat - Formation ${trainingDetails.name}`;
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Votre formation a été achetée avec succès !</h2>
-        
-        <p>Nous vous confirmons l'achat de votre formation.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="margin-top: 0; color: #333;">Détails de votre achat :</h3>
-          <p><strong>Formation :</strong> ${trainingDetails.full_name}</p>
-          <p><strong>Durée :</strong> ${trainingDetails.duration} heures</p>
-          <p><strong>Prix payé :</strong> ${purchaseData.purchase_amount}€</p>
-          ${
-            purchaseData.member_discount > 0
-              ? `<p><strong>Réduction adhérent :</strong> -${purchaseData.member_discount}€</p>`
-              : ""
-          }
-          <p><strong>Date d'achat :</strong> ${new Date(
-            purchaseData.purchase_date
-          ).toLocaleDateString("fr-FR")}</p>
-        </div>
-        
-        <p>Vous recevrez prochainement les informations concernant l'organisation de votre formation.</p>
-        
-        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
-        
-        <p>Cordialement,<br>L'équipe Novapsy</p>
-      </div>
-    `;
-
-    return await sendEmail(userEmail, subject, html);
-  } catch (error) {
-    logWithTimestamp("error", "Erreur envoi email confirmation formation", {
-      userId,
-      error: error.message,
-    });
-    return false;
-  }
-}
-
-// ========================
-// FONCTIONS DE GESTION DES STATUTS UTILISATEUR
-// ========================
-
-/**
  * Met à jour le statut d'un utilisateur vers un statut d'adhésion
  * @param {string} userId - UUID de l'utilisateur
  * @param {number} statusId - ID du statut d'adhésion
@@ -412,7 +169,6 @@ async function updateUserStatusToMembership(userId, statusId) {
       statusId,
     });
 
-    // Utiliser la fonction RPC maintenant qu'elle est réparée
     const { error: statusError } = await supabase.rpc(
       "set_user_status_membership",
       {
@@ -422,25 +178,25 @@ async function updateUserStatusToMembership(userId, statusId) {
     );
 
     if (statusError) {
-      logWithTimestamp("error", "Erreur RPC set_user_status_membership", {
+      logWithTimestamp(
+        "warn",
+        "Erreur mise à jour statut utilisateur",
+        statusError
+      );
+      return false;
+    } else {
+      logWithTimestamp("info", "Statut utilisateur mis à jour avec succès", {
         userId,
         statusId,
-        error: statusError.message,
-        code: statusError.code,
       });
-      return false;
+      return true;
     }
-
-    logWithTimestamp("info", "Statut utilisateur mis à jour avec succès", {
-      userId,
-      statusId,
-    });
-    return true;
   } catch (error) {
-    logWithTimestamp("error", "Exception mise à jour statut", error);
+    logWithTimestamp("warn", "Erreur appel fonction statut", error);
     return false;
   }
 }
+
 // ========================
 // FONCTIONS STRIPE AMÉLIORÉES POUR LES REÇUS
 // ========================
@@ -629,6 +385,205 @@ async function getReceiptFromPaymentIntent(paymentIntentId) {
   } catch (error) {
     logWithTimestamp("error", "Erreur récupération reçu payment_intent", error);
     return null;
+  }
+}
+
+// ========================
+// FONCTIONS EMAIL
+// ========================
+
+/**
+ * Envoie un email de confirmation d'adhésion
+ * @param {string} userId - UUID de l'utilisateur
+ * @param {object} membershipData - Données de l'adhésion
+ * @returns {Promise<boolean>} Succès de l'envoi
+ */
+async function sendMembershipConfirmationEmail(userId, membershipData) {
+  try {
+    const userEmail = await getMailByUser(userId);
+    if (!userEmail) {
+      logWithTimestamp(
+        "warn",
+        "Email utilisateur non trouvé pour confirmation adhésion",
+        { userId }
+      );
+      return false;
+    }
+
+    const subject = "Confirmation de votre adhésion";
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Bienvenue ! Votre adhésion est confirmée</h2>
+        
+        <p>Nous sommes ravis de vous confirmer que votre adhésion a été activée avec succès.</p>
+        
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top: 0; color: #333;">Détails de votre adhésion :</h3>
+          <p><strong>Prix :</strong> ${membershipData.membership_price}€</p>
+          <p><strong>Début :</strong> ${new Date(
+            membershipData.membership_start
+          ).toLocaleDateString("fr-FR")}</p>
+          <p><strong>Fin :</strong> ${new Date(
+            membershipData.membership_end
+          ).toLocaleDateString("fr-FR")}</p>
+        </div>
+        
+        <p>Vous pouvez maintenant profiter de tous les avantages de votre adhésion, notamment les réductions sur nos formations.</p>
+        <p><strong>Important :</strong> Votre adhésion est valable exactement un an. Vous recevrez des notifications avant expiration pour renouveler si vous le souhaitez.</p>
+        
+        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
+        
+        <p>Cordialement,<br>L'équipe Novapsy</p>
+      </div>
+    `;
+
+    return await sendEmail(userEmail, subject, html);
+  } catch (error) {
+    logWithTimestamp("error", "Erreur envoi email confirmation adhésion", {
+      userId,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Envoie un email de confirmation d'achat de formation
+ * @param {string} userId - UUID de l'utilisateur
+ * @param {object} purchaseData - Données de l'achat
+ * @param {object} trainingDetails - Détails de la formation
+ * @returns {Promise<boolean>} Succès de l'envoi
+ */
+async function sendTrainingPurchaseConfirmationEmail(
+  userId,
+  purchaseData,
+  trainingDetails
+) {
+  try {
+    const userEmail = await getMailByUser(userId);
+    if (!userEmail) {
+      logWithTimestamp(
+        "warn",
+        "Email utilisateur non trouvé pour confirmation formation",
+        { userId }
+      );
+      return false;
+    }
+
+    const subject = `Confirmation d'achat - Formation ${trainingDetails.name}`;
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Votre formation a été achetée avec succès !</h2>
+        
+        <p>Nous vous confirmons l'achat de votre formation.</p>
+        
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top: 0; color: #333;">Détails de votre achat :</h3>
+          <p><strong>Formation :</strong> ${trainingDetails.full_name}</p>
+          <p><strong>Durée :</strong> ${trainingDetails.duration} heures</p>
+          <p><strong>Prix payé :</strong> ${purchaseData.purchase_amount}€</p>
+          ${
+            purchaseData.member_discount > 0
+              ? `<p><strong>Réduction adhérent :</strong> -${purchaseData.member_discount}€</p>`
+              : ""
+          }
+          <p><strong>Date d'achat :</strong> ${new Date(
+            purchaseData.purchase_date
+          ).toLocaleDateString("fr-FR")}</p>
+        </div>
+        
+        <p>Vous recevrez prochainement les informations concernant l'organisation de votre formation.</p>
+        
+        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
+        
+        <p>Cordialement,<br>L'équipe Novapsy</p>
+      </div>
+    `;
+
+    return await sendEmail(userEmail, subject, html);
+  } catch (error) {
+    logWithTimestamp("error", "Erreur envoi email confirmation formation", {
+      userId,
+      error: error.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Envoie un email de confirmation d'adhésion pour une association
+ * @param {string} associationId - UUID de l'association
+ * @param {object} membershipData - Données de l'adhésion
+ * @returns {Promise<boolean>} Succès de l'envoi
+ */
+async function sendAssociationMembershipConfirmationEmail(
+  associationId,
+  membershipData
+) {
+  try {
+    // Récupérer les infos de l'association
+    const { data: association, error } = await supabase
+      .from("associations")
+      .select("association_name, association_mail")
+      .eq("association_id", associationId)
+      .single();
+
+    if (error || !association?.association_mail) {
+      logWithTimestamp(
+        "warn",
+        "Email association non trouvé pour confirmation adhésion",
+        { associationId }
+      );
+      return false;
+    }
+
+    const subject = `Confirmation d'adhésion - ${association.association_name}`;
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Bienvenue ! Votre association est maintenant adhérente</h2>
+        
+        <p>Nous sommes ravis de confirmer que l'adhésion de <strong>${association.association_name}</strong> a été activée avec succès.</p>
+        
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top: 0; color: #333;">Détails de votre adhésion :</h3>
+          <p><strong>Prix :</strong> ${membershipData.membership_price}€</p>
+          <p><strong>Début :</strong> ${new Date(
+            membershipData.membership_start
+          ).toLocaleDateString("fr-FR")}</p>
+          <p><strong>Fin :</strong> ${new Date(
+            membershipData.membership_end
+          ).toLocaleDateString("fr-FR")}</p>
+        </div>
+        
+        <div style="background-color: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top: 0; color: #2d5a2d;">🎉 Avantages pour tous vos membres :</h3>
+          <ul style="color: #2d5a2d;">
+            <li>Accès prioritaire aux événements</li>
+            <li>Réductions sur les formations</li>
+            <li>Support technique dédié</li>
+            <li>Accès à la plateforme premium</li>
+          </ul>
+        </div>
+        
+        <p><strong>Important :</strong> Tous vos membres actuels et futurs bénéficient automatiquement de ces avantages. Aucune action supplémentaire n'est requise !</p>
+        
+        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
+        
+        <p>Cordialement,<br>L'équipe Novapsy</p>
+      </div>
+    `;
+
+    return await sendEmail(association.association_mail, subject, html);
+  } catch (error) {
+    logWithTimestamp(
+      "error",
+      "Erreur envoi email confirmation adhésion association",
+      {
+        associationId,
+        error: error.message,
+      }
+    );
+    return false;
   }
 }
 
@@ -1112,6 +1067,105 @@ function validateContactData(data) {
 }
 
 // ========================
+// FONCTIONS DE VALIDATION DEMANDE PRÉVENTION
+// ========================
+
+/**
+ * Validation des données de demande de prévention
+ */
+function validatePreventionRequest(data) {
+  const { dates, durees, lieu, publicConcerne, category } = data;
+  const errors = {};
+
+  // Validation des champs obligatoires
+  if (!dates || dates.trim().length < 3) {
+    errors.dates = "Les dates souhaitées sont requises (minimum 3 caractères)";
+  }
+
+  if (!durees || durees.trim().length < 2) {
+    errors.durees = "La durée est requise (minimum 2 caractères)";
+  }
+
+  if (!lieu || lieu.trim().length < 2) {
+    errors.lieu = "Le lieu est requis (minimum 2 caractères)";
+  }
+
+  if (!publicConcerne || publicConcerne.trim().length < 3) {
+    errors.publicConcerne =
+      "Le public concerné est requis (minimum 3 caractères)";
+  }
+
+  if (!category || !category.nom) {
+    errors.category = "La catégorie de prévention est requise";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
+
+/**
+ * Détermine les couleurs selon le thème de prévention
+ */
+function getPreventionThemeColors(categoryName) {
+  const name = categoryName.toLowerCase();
+
+  // Violet pour psycho
+  if (
+    name.includes("psycho") ||
+    name.includes("mental") ||
+    name.includes("stress") ||
+    name.includes("burnout") ||
+    name.includes("anxiété") ||
+    name.includes("dépression")
+  ) {
+    return {
+      primary: "#8b5cf6", // violet-500
+      secondary: "#7c3aed", // violet-600
+      gradient: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
+    };
+  }
+
+  // Rose pour sexualité
+  if (
+    name.includes("sex") ||
+    name.includes("intimité") ||
+    name.includes("couple") ||
+    name.includes("genre") ||
+    name.includes("orientation")
+  ) {
+    return {
+      primary: "#ec4899", // pink-500
+      secondary: "#db2777", // pink-600
+      gradient: "linear-gradient(135deg, #ec4899 0%, #db2777 100%)",
+    };
+  }
+
+  // Bleu foncé pour handicaps invisibles
+  if (
+    name.includes("handicap") ||
+    name.includes("invisible") ||
+    name.includes("accessibilité") ||
+    name.includes("inclusion") ||
+    name.includes("différence")
+  ) {
+    return {
+      primary: "#1e40af", // blue-800
+      secondary: "#1e3a8a", // blue-900
+      gradient: "linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)",
+    };
+  }
+
+  // Couleur par défaut (vert)
+  return {
+    primary: "#10b981", // emerald-500
+    secondary: "#059669", // emerald-600
+    gradient: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+  };
+}
+
+// ========================
 // FONCTIONS EMAIL
 // ========================
 
@@ -1379,6 +1433,204 @@ function generateConfirmationEmailHTML(userName, userMessage) {
   `;
 }
 
+/**
+ * Génère le HTML pour l'email de demande de prévention
+ */
+function generatePreventionRequestEmailHTML(requestData) {
+  const {
+    dates,
+    durees,
+    lieu,
+    publicConcerne,
+    thematiquesEnvisagees,
+    formeEnvisagee,
+    message,
+    category,
+    timestamp,
+  } = requestData;
+
+  // Obtenir les couleurs du thème
+  const themeColors = getPreventionThemeColors(category.nom);
+
+  return `
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Nouvelle demande de prévention - ${category.nom}</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+        
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
+          <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 600;">
+            🎯 Nouvelle Demande de Prévention
+          </h1>
+          <p style="color: rgba(255, 255, 255, 0.9); margin: 8px 0 0 0; font-size: 16px;">
+            Catalogue des Préventions - Novapsy
+          </p>
+        </div>
+
+        <!-- Content -->
+        <div style="padding: 40px 30px;">
+          
+          <!-- Prevention Category -->
+          <div style="background: ${themeColors.gradient}; border-radius: 12px; padding: 25px; margin-bottom: 30px; color: white;">
+            <h2 style="margin: 0 0 15px 0; font-size: 24px; font-weight: 600;">
+              📚 ${category.nom}
+            </h2>
+            ${
+              category.description
+                ? `
+              <p style="margin: 0; font-size: 16px; opacity: 0.9; line-height: 1.5;">
+                ${category.description}
+              </p>
+            `
+                : ""
+            }
+          </div>
+
+          <!-- Request Details -->
+          <div style="background-color: #f8fafc; border-radius: 12px; padding: 25px; margin-bottom: 30px; border-left: 4px solid #667eea;">
+            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">
+              📋 Détails de la demande
+            </h3>
+            
+            <div style="margin-bottom: 15px;">
+              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Dates souhaitées :</span>
+              <span style="color: #2d3748; font-size: 16px;">${dates}</span>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Durée :</span>
+              <span style="color: #2d3748; font-size: 16px;">${durees}</span>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Lieu :</span>
+              <span style="color: #2d3748; font-size: 16px;">${lieu}</span>
+            </div>
+            
+            <div style="margin-bottom: 0;">
+              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Public concerné :</span>
+              <span style="color: #2d3748; font-size: 16px;">${publicConcerne}</span>
+            </div>
+          </div>
+
+          ${
+            thematiquesEnvisagees || formeEnvisagee
+              ? `
+          <!-- Optional Details -->
+          <div style="margin-bottom: 30px;">
+            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">
+              🔧 Personnalisation demandée
+            </h3>
+            
+            ${
+              thematiquesEnvisagees
+                ? `
+            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 15px;">
+              <h4 style="margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #4a5568;">
+                Thématiques envisagées :
+              </h4>
+              <div style="color: #2d3748; line-height: 1.6; font-size: 15px;">
+                ${thematiquesEnvisagees.replace(/\n/g, "<br>")}
+              </div>
+            </div>
+            `
+                : ""
+            }
+            
+            ${
+              formeEnvisagee
+                ? `
+            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
+              <h4 style="margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #4a5568;">
+                Forme envisagée :
+              </h4>
+              <div style="color: #2d3748; line-height: 1.6; font-size: 15px;">
+                ${formeEnvisagee.replace(/\n/g, "<br>")}
+              </div>
+            </div>
+            `
+                : ""
+            }
+          </div>
+          `
+              : ""
+          }
+
+          ${
+            message
+              ? `
+          <!-- Additional Message -->
+          <div style="margin-bottom: 30px;">
+            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">
+              💬 Message complémentaire
+            </h3>
+            <div style="background-color: #ffffff; border: 2px solid #e2e8f0; border-radius: 12px; padding: 25px;">
+              <div style="color: #2d3748; line-height: 1.7; font-size: 16px; white-space: pre-wrap;">${message}</div>
+            </div>
+          </div>
+          `
+              : ""
+          }
+
+          <!-- Metadata -->
+          <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin-bottom: 30px;">
+            <h4 style="margin: 0 0 15px 0; color: #0369a1; font-size: 16px; font-weight: 600;">
+              ℹ️ Informations de la demande
+            </h4>
+            <div style="color: #0369a1; font-size: 14px;">
+              <p style="margin: 5px 0;">
+                <strong>Date de demande :</strong> ${new Date(
+                  timestamp
+                ).toLocaleString("fr-FR", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </p>
+            </div>
+          </div>
+
+          <!-- Action Button -->
+          <div style="text-align: center; margin: 30px 0;">
+            <div style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; border-radius: 8px; font-weight: 600; font-size: 16px;">
+              📞 Traiter cette demande de prévention
+            </div>
+          </div>
+
+          <!-- Contact Info -->
+          <div style="background-color: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; padding: 20px; text-align: center;">
+            <p style="margin: 0; color: #2f855a; font-size: 14px;">
+              <strong>💡 Action recommandée :</strong> Contacter le demandeur pour finaliser les modalités de la formation
+            </p>
+          </div>
+
+        </div>
+
+        <!-- Footer -->
+        <div style="background-color: #2d3748; color: #a0aec0; text-align: center; padding: 25px;">
+          <p style="margin: 0; font-size: 14px;">
+            Email généré automatiquement par le Catalogue des Préventions - Novapsy
+          </p>
+          <p style="margin: 8px 0 0 0; font-size: 12px; opacity: 0.8;">
+            Cette demande provient du formulaire de prévention personnalisée
+          </p>
+        </div>
+
+      </div>
+    </body>
+    </html>
+  `;
+}
+
 // ========================
 // ROUTES API - FORFAITS D'ADHÉSION
 // ========================
@@ -1491,83 +1743,6 @@ app.post("/create-checkout-session", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-/**
- * Envoie un email de confirmation d'adhésion pour une association
- * @param {string} associationId - UUID de l'association
- * @param {object} membershipData - Données de l'adhésion
- * @returns {Promise<boolean>} Succès de l'envoi
- */
-async function sendAssociationMembershipConfirmationEmail(
-  associationId,
-  membershipData
-) {
-  try {
-    // Récupérer les infos de l'association
-    const { data: association, error } = await supabase
-      .from("associations")
-      .select("association_name, association_mail")
-      .eq("association_id", associationId)
-      .single();
-
-    if (error || !association?.association_mail) {
-      logWithTimestamp(
-        "warn",
-        "Email association non trouvé pour confirmation adhésion",
-        { associationId }
-      );
-      return false;
-    }
-
-    const subject = `Confirmation d'adhésion - ${association.association_name}`;
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Bienvenue ! Votre association est maintenant adhérente</h2>
-        
-        <p>Nous sommes ravis de confirmer que l'adhésion de <strong>${association.association_name}</strong> a été activée avec succès.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="margin-top: 0; color: #333;">Détails de votre adhésion :</h3>
-          <p><strong>Prix :</strong> ${membershipData.membership_price}€</p>
-          <p><strong>Début :</strong> ${new Date(
-            membershipData.membership_start
-          ).toLocaleDateString("fr-FR")}</p>
-          <p><strong>Fin :</strong> ${new Date(
-            membershipData.membership_end
-          ).toLocaleDateString("fr-FR")}</p>
-        </div>
-        
-        <div style="background-color: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="margin-top: 0; color: #2d5a2d;">🎉 Avantages pour tous vos membres :</h3>
-          <ul style="color: #2d5a2d;">
-            <li>Accès prioritaire aux événements</li>
-            <li>Réductions sur les formations</li>
-            <li>Support technique dédié</li>
-            <li>Accès à la plateforme premium</li>
-          </ul>
-        </div>
-        
-        <p><strong>Important :</strong> Tous vos membres actuels et futurs bénéficient automatiquement de ces avantages. Aucune action supplémentaire n'est requise !</p>
-        
-        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
-        
-        <p>Cordialement,<br>L'équipe Novapsy</p>
-      </div>
-    `;
-
-    return await sendEmail(association.association_mail, subject, html);
-  } catch (error) {
-    logWithTimestamp(
-      "error",
-      "Erreur envoi email confirmation adhésion association",
-      {
-        associationId,
-        error: error.message,
-      }
-    );
-    return false;
-  }
-}
 
 /**
  * POST /process-payment-success
@@ -2627,679 +2802,6 @@ app.post("/contact", async (req, res) => {
 });
 
 // ========================
-// ROUTES DE TEST ET SANTÉ
-// ========================
-
-/**
- * GET /contact/test
- * Test de la configuration email
- */
-app.get("/contact/test", async (req, res) => {
-  logWithTimestamp("info", "🧪 === TEST CONFIGURATION EMAIL ===");
-
-  try {
-    const testHTML = `
-      <div style="padding: 30px; font-family: Arial, sans-serif;">
-        <h2 style="color: #10b981;">🧪 Test de Configuration Email</h2>
-        <p>✅ La configuration Resend fonctionne correctement</p>
-        <p><strong>Date :</strong> ${new Date().toLocaleString("fr-FR")}</p>
-        <p><strong>From :</strong> ${FROM_EMAIL}</p>
-        <p><strong>To :</strong> ${CONTACT_EMAIL}</p>
-      </div>
-    `;
-
-    const result = await sendEmailWithRetry(
-      CONTACT_EMAIL,
-      "🧪 Test Configuration Resend - Novapsy",
-      testHTML
-    );
-
-    if (result.success) {
-      logWithTimestamp("info", "✅ Test email envoyé avec succès");
-      return res.json({
-        success: true,
-        message: "Configuration email fonctionnelle",
-        details: {
-          messageId: result.messageId,
-          from: FROM_EMAIL,
-          to: CONTACT_EMAIL,
-          attempt: result.attempt,
-        },
-      });
-    } else {
-      logWithTimestamp("error", "❌ Test email échoué", result.error);
-      return res.status(500).json({
-        success: false,
-        error: "Configuration email défaillante",
-        details: result.error,
-      });
-    }
-  } catch (error) {
-    logWithTimestamp("error", "💥 Exception test email", error);
-    return res.status(500).json({
-      success: false,
-      error: "Erreur lors du test",
-      message: error.message,
-    });
-  }
-});
-
-// ========================
-// ROUTES DE DEBUG ASSOCIATIONS - AJOUTEZ CE CODE AVANT app.get("/health")
-// ========================
-
-/**
- * GET /debug/association-membership/:associationId
- * Debug des adhésions d'une association
- */
-app.get("/debug/association-membership/:associationId", async (req, res) => {
-  const { associationId } = req.params;
-
-  logWithTimestamp("info", "=== DEBUG ADHÉSION ASSOCIATION ===", {
-    associationId,
-  });
-
-  try {
-    // 1. Vérifier que l'association existe
-    const { data: association, error: assoError } = await supabase
-      .from("associations")
-      .select("*")
-      .eq("association_id", associationId)
-      .single();
-
-    if (assoError) {
-      logWithTimestamp("error", "Association non trouvée", assoError);
-      return res.status(404).json({ error: "Association non trouvée" });
-    }
-
-    // 2. Récupérer toutes les adhésions de l'association
-    const { data: memberships, error: membershipError } = await supabase
-      .from("associations_memberships")
-      .select(
-        `
-        *,
-        memberships (
-          membership_id,
-          membership_start,
-          membership_end,
-          membership_price,
-          status_id,
-          stripe_invoice_id,
-          stripe_session_id,
-          payment_type,
-          payment_status,
-          payment_intent_id
-        )
-      `
-      )
-      .eq("association_id", associationId)
-      .order("memberships(membership_start)", { ascending: false });
-
-    if (membershipError) {
-      logWithTimestamp(
-        "error",
-        "Erreur récupération adhésions",
-        membershipError
-      );
-    }
-
-    // 3. Calculer les statuts des adhésions
-    const now = new Date();
-    const processedMemberships = (memberships || []).map((item) => {
-      const membership = item.memberships;
-      const endDate = new Date(membership.membership_end);
-
-      return {
-        ...item,
-        membership_details: {
-          ...membership,
-          isActive: endDate > now && membership.payment_status === "paid",
-          isExpired: endDate <= now,
-          daysRemaining: Math.max(
-            0,
-            Math.ceil((endDate - now) / (1000 * 60 * 60 * 24))
-          ),
-        },
-      };
-    });
-
-    // 4. Compter les membres de l'association
-    const { count: memberCount, error: countError } = await supabase
-      .from("users_associations")
-      .select("*", { count: "exact", head: true })
-      .eq("association_id", associationId);
-
-    if (countError) {
-      logWithTimestamp("error", "Erreur comptage membres", countError);
-    }
-
-    const debugInfo = {
-      association: {
-        id: association.association_id,
-        name: association.association_name,
-        email: association.association_mail,
-      },
-      memberships: {
-        total: processedMemberships.length,
-        active: processedMemberships.filter(
-          (m) => m.membership_details.isActive
-        ).length,
-        expired: processedMemberships.filter(
-          (m) => m.membership_details.isExpired
-        ).length,
-        details: processedMemberships,
-      },
-      members: {
-        total: memberCount || 0,
-      },
-      debug_timestamp: new Date().toISOString(),
-    };
-
-    logWithTimestamp("info", "Debug adhésion association complété", {
-      associationId,
-      totalMemberships: debugInfo.memberships.total,
-      activeMemberships: debugInfo.memberships.active,
-      totalMembers: debugInfo.members.total,
-    });
-
-    res.json(debugInfo);
-  } catch (error) {
-    logWithTimestamp("error", "Erreur debug adhésion association", error);
-    res.status(500).json({
-      error: error.message,
-      associationId,
-    });
-  }
-});
-
-/**
- * GET /verify-association-membership/:associationId
- * Vérifie l'adhésion active d'une association (version simplifiée)
- */
-app.get("/verify-association-membership/:associationId", async (req, res) => {
-  const { associationId } = req.params;
-
-  try {
-    const { data, error } = await supabase
-      .from("associations_memberships")
-      .select(
-        `
-        *,
-        memberships (
-          membership_id,
-          membership_start,
-          membership_end,
-          membership_price,
-          status_id,
-          stripe_invoice_id,
-          stripe_session_id,
-          payment_status
-        )
-      `
-      )
-      .eq("association_id", associationId)
-      .order("memberships(membership_start)", { ascending: false });
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    const now = new Date();
-    const activeMemberships = (data || []).filter((item) => {
-      const endDate = new Date(item.memberships.membership_end);
-      return endDate > now && item.memberships.payment_status === "paid";
-    });
-
-    res.json({
-      association_id: associationId,
-      total_memberships: data?.length || 0,
-      active_memberships: activeMemberships.length,
-      latest_membership: data?.[0] || null,
-      has_active_membership: activeMemberships.length > 0,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ========================
-// ROUTES DE SANTÉ ET DEBUG
-// ========================
-
-/**
- * GET /health
- * Endpoint de santé du serveur
- */
-app.get("/health", (req, res) => {
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    version: "2.0.0-contact-focused",
-    services: {
-      email: {
-        configured: !!process.env.RESEND_API_KEY,
-        from: FROM_EMAIL,
-        to: CONTACT_EMAIL,
-      },
-      stripe: {
-        configured: !!process.env.STRIPE_SECRET_KEY,
-      },
-      supabase: {
-        configured: !!process.env.SUPABASE_URL,
-      },
-    },
-    features: {
-      contact_form: true,
-      email_retry: true,
-      email_confirmation: true,
-    },
-  });
-});
-
-/**
- * GET /user-email/:userId
- * Récupère l'email d'un utilisateur (pour debug)
- * Params: userId (UUID)
- */
-app.get("/user-email/:userId", async (req, res) => {
-  const { userId } = req.params;
-
-  try {
-    const email = await getMailByUser(userId);
-
-    if (email) {
-      res.json({ email });
-    } else {
-      res.status(404).json({ error: "Email utilisateur non trouvé" });
-    }
-  } catch (error) {
-    logWithTimestamp("error", "Erreur récupération email utilisateur", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * POST /send-newsletter
- * Envoie une newsletter à tous les abonnés
- * Body: { subject, html }
- */
-app.post("/send-newsletter", async (req, res) => {
-  const { subject, html } = req.body;
-
-  logWithTimestamp("info", "=== ENVOI NEWSLETTER ===");
-  logWithTimestamp("info", "Données reçues", { subject });
-
-  if (!subject) {
-    return res.status(400).json({ error: "Le sujet est requis" });
-  }
-
-  if (!html) {
-    return res.status(400).json({ error: "Le contenu HTML est requis" });
-  }
-
-  try {
-    // Récupérer les emails des utilisateurs abonnés à la newsletter
-    const { data: subscribers, error: subscribersError } = await supabase.from(
-      "newsletter_subscribers"
-    ).select(`
-        users(user_email)
-      `);
-
-    if (subscribersError) {
-      logWithTimestamp("error", "Erreur détaillée récupération abonnés", {
-        message: subscribersError.message,
-        details: subscribersError.details,
-        hint: subscribersError.hint,
-      });
-      return res.status(500).json({
-        error: "Erreur récupération abonnés",
-        details: subscribersError.message,
-      });
-    }
-
-    if (!subscribers || subscribers.length === 0) {
-      logWithTimestamp("info", "Aucun abonné trouvé");
-      return res.status(404).json({ error: "Aucun abonné trouvé" });
-    }
-
-    // Extraire les emails des utilisateurs
-    const subscribersEmails = subscribers.map(
-      (subscriber) => subscriber.users.user_email
-    );
-
-    let sentCount = 0;
-    let errorCount = 0;
-
-    // Envoyer la newsletter à chaque abonné
-    for (const email of subscribersEmails) {
-      const success = await sendEmail(email, subject, html);
-      if (success) {
-        sentCount++;
-      } else {
-        errorCount++;
-      }
-    }
-
-    logWithTimestamp("info", "Newsletter envoyée avec succès", {
-      sent: sentCount,
-      errors: errorCount,
-      total: subscribers.length,
-    });
-
-    res.json({
-      success: true,
-      message: "Newsletter envoyée avec succès",
-      stats: {
-        sent: sentCount,
-        errors: errorCount,
-        total: subscribers.length,
-      },
-    });
-  } catch (error) {
-    logWithTimestamp("error", "Erreur envoi newsletter", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ========================
-// FONCTIONS VALIDATION DEMANDE PRÉVENTION
-// ========================
-// 👆 AJOUTER CE CODE APRÈS LA ROUTE `/contact` et AVANT `/contact/test` 👆
-
-/**
- * Validation des données de demande de prévention
- */
-function validatePreventionRequest(data) {
-  const { dates, durees, lieu, publicConcerne, category } = data;
-  const errors = {};
-
-  // Validation des champs obligatoires
-  if (!dates || dates.trim().length < 3) {
-    errors.dates = "Les dates souhaitées sont requises (minimum 3 caractères)";
-  }
-
-  if (!durees || durees.trim().length < 2) {
-    errors.durees = "La durée est requise (minimum 2 caractères)";
-  }
-
-  if (!lieu || lieu.trim().length < 2) {
-    errors.lieu = "Le lieu est requis (minimum 2 caractères)";
-  }
-
-  if (!publicConcerne || publicConcerne.trim().length < 3) {
-    errors.publicConcerne =
-      "Le public concerné est requis (minimum 3 caractères)";
-  }
-
-  if (!category || !category.nom) {
-    errors.category = "La catégorie de prévention est requise";
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-  };
-}
-
-/**
- * Détermine les couleurs selon le thème de prévention
- */
-function getPreventionThemeColors(categoryName) {
-  const name = categoryName.toLowerCase();
-
-  // Violet pour psycho
-  if (
-    name.includes("psycho") ||
-    name.includes("mental") ||
-    name.includes("stress") ||
-    name.includes("burnout") ||
-    name.includes("anxiété") ||
-    name.includes("dépression")
-  ) {
-    return {
-      primary: "#8b5cf6", // violet-500
-      secondary: "#7c3aed", // violet-600
-      gradient: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
-    };
-  }
-
-  // Rose pour sexualité
-  if (
-    name.includes("sex") ||
-    name.includes("intimité") ||
-    name.includes("couple") ||
-    name.includes("genre") ||
-    name.includes("orientation")
-  ) {
-    return {
-      primary: "#ec4899", // pink-500
-      secondary: "#db2777", // pink-600
-      gradient: "linear-gradient(135deg, #ec4899 0%, #db2777 100%)",
-    };
-  }
-
-  // Bleu foncé pour handicaps invisibles
-  if (
-    name.includes("handicap") ||
-    name.includes("invisible") ||
-    name.includes("accessibilité") ||
-    name.includes("inclusion") ||
-    name.includes("différence")
-  ) {
-    return {
-      primary: "#1e40af", // blue-800
-      secondary: "#1e3a8a", // blue-900
-      gradient: "linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)",
-    };
-  }
-
-  // Couleur par défaut (vert)
-  return {
-    primary: "#10b981", // emerald-500
-    secondary: "#059669", // emerald-600
-    gradient: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-  };
-}
-
-/**
- * Génère le HTML pour l'email de demande de prévention
- */
-function generatePreventionRequestEmailHTML(requestData) {
-  const {
-    dates,
-    durees,
-    lieu,
-    publicConcerne,
-    thematiquesEnvisagees,
-    formeEnvisagee,
-    message,
-    category,
-    timestamp,
-  } = requestData;
-
-  // Obtenir les couleurs du thème
-  const themeColors = getPreventionThemeColors(category.nom);
-
-  return `
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Nouvelle demande de prévention - ${category.nom}</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc;">
-      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-        
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 600;">
-            🎯 Nouvelle Demande de Prévention
-          </h1>
-          <p style="color: rgba(255, 255, 255, 0.9); margin: 8px 0 0 0; font-size: 16px;">
-            Catalogue des Préventions - Novapsy
-          </p>
-        </div>
-
-        <!-- Content -->
-        <div style="padding: 40px 30px;">
-          
-          <!-- Prevention Category -->
-          <div style="background: ${themeColors.gradient}; border-radius: 12px; padding: 25px; margin-bottom: 30px; color: white;">
-            <h2 style="margin: 0 0 15px 0; font-size: 24px; font-weight: 600;">
-              📚 ${category.nom}
-            </h2>
-            ${
-              category.description
-                ? `
-              <p style="margin: 0; font-size: 16px; opacity: 0.9; line-height: 1.5;">
-                ${category.description}
-              </p>
-            `
-                : ""
-            }
-          </div>
-
-          <!-- Request Details -->
-          <div style="background-color: #f8fafc; border-radius: 12px; padding: 25px; margin-bottom: 30px; border-left: 4px solid #667eea;">
-            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">
-              📋 Détails de la demande
-            </h3>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Dates souhaitées :</span>
-              <span style="color: #2d3748; font-size: 16px;">${dates}</span>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Durée :</span>
-              <span style="color: #2d3748; font-size: 16px;">${durees}</span>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Lieu :</span>
-              <span style="color: #2d3748; font-size: 16px;">${lieu}</span>
-            </div>
-            
-            <div style="margin-bottom: 0;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Public concerné :</span>
-              <span style="color: #2d3748; font-size: 16px;">${publicConcerne}</span>
-            </div>
-          </div>
-
-          ${
-            thematiquesEnvisagees || formeEnvisagee
-              ? `
-          <!-- Optional Details -->
-          <div style="margin-bottom: 30px;">
-            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">
-              🔧 Personnalisation demandée
-            </h3>
-            
-            ${
-              thematiquesEnvisagees
-                ? `
-            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 15px;">
-              <h4 style="margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #4a5568;">
-                Thématiques envisagées :
-              </h4>
-              <div style="color: #2d3748; line-height: 1.6; font-size: 15px;">
-                ${thematiquesEnvisagees.replace(/\n/g, "<br>")}
-              </div>
-            </div>
-            `
-                : ""
-            }
-            
-            ${
-              formeEnvisagee
-                ? `
-            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
-              <h4 style="margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #4a5568;">
-                Forme envisagée :
-              </h4>
-              <div style="color: #2d3748; line-height: 1.6; font-size: 15px;">
-                ${formeEnvisagee.replace(/\n/g, "<br>")}
-              </div>
-            </div>
-            `
-                : ""
-            }
-          </div>
-          `
-              : ""
-          }
-
-          ${
-            message
-              ? `
-          <!-- Additional Message -->
-          <div style="margin-bottom: 30px;">
-            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">
-              💬 Message complémentaire
-            </h3>
-            <div style="background-color: #ffffff; border: 2px solid #e2e8f0; border-radius: 12px; padding: 25px;">
-              <div style="color: #2d3748; line-height: 1.7; font-size: 16px; white-space: pre-wrap;">${message}</div>
-            </div>
-          </div>
-          `
-              : ""
-          }
-
-          <!-- Metadata -->
-          <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin-bottom: 30px;">
-            <h4 style="margin: 0 0 15px 0; color: #0369a1; font-size: 16px; font-weight: 600;">
-              ℹ️ Informations de la demande
-            </h4>
-            <div style="color: #0369a1; font-size: 14px;">
-              <p style="margin: 5px 0;">
-                <strong>Date de demande :</strong> ${new Date(
-                  timestamp
-                ).toLocaleString("fr-FR", {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </p>
-            </div>
-          </div>
-
-          <!-- Action Button -->
-          <div style="text-align: center; margin: 30px 0;">
-            <div style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; border-radius: 8px; font-weight: 600; font-size: 16px;">
-              📞 Traiter cette demande de prévention
-            </div>
-          </div>
-
-          <!-- Contact Info -->
-          <div style="background-color: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; padding: 20px; text-align: center;">
-            <p style="margin: 0; color: #2f855a; font-size: 14px;">
-              <strong>💡 Action recommandée :</strong> Contacter le demandeur pour finaliser les modalités de la formation
-            </p>
-          </div>
-
-        </div>
-
-        <!-- Footer -->
-        <div style="background-color: #2d3748; color: #a0aec0; text-align: center; padding: 25px;">
-          <p style="margin: 0; font-size: 14px;">
-            Email généré automatiquement par le Catalogue des Préventions - Novapsy
-          </p>
-          <p style="margin: 8px 0 0 0; font-size: 12px; opacity: 0.8;">
-            Cette demande provient du formulaire de prévention personnalisée
-          </p>
-        </div>
-
-      </div>
-    </body>
-    </html>
-  `;
-}
-
-// ========================
 // ROUTE DEMANDE DE PRÉVENTION
 // ========================
 
@@ -3559,41 +3061,396 @@ app.post("/api/test-prevention-request", async (req, res) => {
 });
 
 // ========================
+// ROUTES DE TEST ET SANTÉ
+// ========================
+
+/**
+ * GET /contact/test
+ * Test de la configuration email
+ */
+app.get("/contact/test", async (req, res) => {
+  logWithTimestamp("info", "🧪 === TEST CONFIGURATION EMAIL ===");
+
+  try {
+    const testHTML = `
+      <div style="padding: 30px; font-family: Arial, sans-serif;">
+        <h2 style="color: #10b981;">🧪 Test de Configuration Email</h2>
+        <p>✅ La configuration Resend fonctionne correctement</p>
+        <p><strong>Date :</strong> ${new Date().toLocaleString("fr-FR")}</p>
+        <p><strong>From :</strong> ${FROM_EMAIL}</p>
+        <p><strong>To :</strong> ${CONTACT_EMAIL}</p>
+      </div>
+    `;
+
+    const result = await sendEmailWithRetry(
+      CONTACT_EMAIL,
+      "🧪 Test Configuration Resend - Novapsy",
+      testHTML
+    );
+
+    if (result.success) {
+      logWithTimestamp("info", "✅ Test email envoyé avec succès");
+      return res.json({
+        success: true,
+        message: "Configuration email fonctionnelle",
+        details: {
+          messageId: result.messageId,
+          from: FROM_EMAIL,
+          to: CONTACT_EMAIL,
+          attempt: result.attempt,
+        },
+      });
+    } else {
+      logWithTimestamp("error", "❌ Test email échoué", result.error);
+      return res.status(500).json({
+        success: false,
+        error: "Configuration email défaillante",
+        details: result.error,
+      });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "💥 Exception test email", error);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur lors du test",
+      message: error.message,
+    });
+  }
+});
+
+// ========================
+// ROUTES DE DEBUG ASSOCIATIONS
+// ========================
+
+/**
+ * GET /debug/association-membership/:associationId
+ * Debug des adhésions d'une association
+ */
+app.get("/debug/association-membership/:associationId", async (req, res) => {
+  const { associationId } = req.params;
+
+  logWithTimestamp("info", "=== DEBUG ADHÉSION ASSOCIATION ===", {
+    associationId,
+  });
+
+  try {
+    // 1. Vérifier que l'association existe
+    const { data: association, error: assoError } = await supabase
+      .from("associations")
+      .select("*")
+      .eq("association_id", associationId)
+      .single();
+
+    if (assoError) {
+      logWithTimestamp("error", "Association non trouvée", assoError);
+      return res.status(404).json({ error: "Association non trouvée" });
+    }
+
+    // 2. Récupérer toutes les adhésions de l'association
+    const { data: memberships, error: membershipError } = await supabase
+      .from("associations_memberships")
+      .select(
+        `
+        *,
+        memberships (
+          membership_id,
+          membership_start,
+          membership_end,
+          membership_price,
+          status_id,
+          stripe_invoice_id,
+          stripe_session_id,
+          payment_type,
+          payment_status,
+          payment_intent_id
+        )
+      `
+      )
+      .eq("association_id", associationId)
+      .order("memberships(membership_start)", { ascending: false });
+
+    if (membershipError) {
+      logWithTimestamp(
+        "error",
+        "Erreur récupération adhésions",
+        membershipError
+      );
+    }
+
+    // 3. Calculer les statuts des adhésions
+    const now = new Date();
+    const processedMemberships = (memberships || []).map((item) => {
+      const membership = item.memberships;
+      const endDate = new Date(membership.membership_end);
+
+      return {
+        ...item,
+        membership_details: {
+          ...membership,
+          isActive: endDate > now && membership.payment_status === "paid",
+          isExpired: endDate <= now,
+          daysRemaining: Math.max(
+            0,
+            Math.ceil((endDate - now) / (1000 * 60 * 60 * 24))
+          ),
+        },
+      };
+    });
+
+    // 4. Compter les membres de l'association
+    const { count: memberCount, error: countError } = await supabase
+      .from("users_associations")
+      .select("*", { count: "exact", head: true })
+      .eq("association_id", associationId);
+
+    if (countError) {
+      logWithTimestamp("error", "Erreur comptage membres", countError);
+    }
+
+    const debugInfo = {
+      association: {
+        id: association.association_id,
+        name: association.association_name,
+        email: association.association_mail,
+      },
+      memberships: {
+        total: processedMemberships.length,
+        active: processedMemberships.filter(
+          (m) => m.membership_details.isActive
+        ).length,
+        expired: processedMemberships.filter(
+          (m) => m.membership_details.isExpired
+        ).length,
+        details: processedMemberships,
+      },
+      members: {
+        total: memberCount || 0,
+      },
+      debug_timestamp: new Date().toISOString(),
+    };
+
+    logWithTimestamp("info", "Debug adhésion association complété", {
+      associationId,
+      totalMemberships: debugInfo.memberships.total,
+      activeMemberships: debugInfo.memberships.active,
+      totalMembers: debugInfo.members.total,
+    });
+
+    res.json(debugInfo);
+  } catch (error) {
+    logWithTimestamp("error", "Erreur debug adhésion association", error);
+    res.status(500).json({
+      error: error.message,
+      associationId,
+    });
+  }
+});
+
+/**
+ * GET /verify-association-membership/:associationId
+ * Vérifie l'adhésion active d'une association (version simplifiée)
+ */
+app.get("/verify-association-membership/:associationId", async (req, res) => {
+  const { associationId } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from("associations_memberships")
+      .select(
+        `
+        *,
+        memberships (
+          membership_id,
+          membership_start,
+          membership_end,
+          membership_price,
+          status_id,
+          stripe_invoice_id,
+          stripe_session_id,
+          payment_status
+        )
+      `
+      )
+      .eq("association_id", associationId)
+      .order("memberships(membership_start)", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const now = new Date();
+    const activeMemberships = (data || []).filter((item) => {
+      const endDate = new Date(item.memberships.membership_end);
+      return endDate > now && item.memberships.payment_status === "paid";
+    });
+
+    res.json({
+      association_id: associationId,
+      total_memberships: data?.length || 0,
+      active_memberships: activeMemberships.length,
+      latest_membership: data?.[0] || null,
+      has_active_membership: activeMemberships.length > 0,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========================
+// ROUTES DE SANTÉ ET DEBUG
+// ========================
+
+/**
+ * GET /health
+ * Endpoint de santé du serveur
+ */
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    version: "2.0.0-refactored-shared-config",
+    services: {
+      email: {
+        configured: !!process.env.RESEND_API_KEY,
+        from: FROM_EMAIL,
+        to: CONTACT_EMAIL,
+      },
+      stripe: {
+        configured: !!process.env.STRIPE_SECRET_KEY,
+      },
+      supabase: {
+        configured: !!process.env.SUPABASE_URL,
+      },
+    },
+    features: {
+      contact_form: true,
+      email_retry: true,
+      email_confirmation: true,
+      prevention_requests: true,
+      membership_management: true,
+      training_purchases: true,
+    },
+  });
+});
+
+/**
+ * GET /user-email/:userId
+ * Récupère l'email d'un utilisateur (pour debug)
+ * Params: userId (UUID)
+ */
+app.get("/user-email/:userId", async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const email = await getMailByUser(userId);
+
+    if (email) {
+      res.json({ email });
+    } else {
+      res.status(404).json({ error: "Email utilisateur non trouvé" });
+    }
+  } catch (error) {
+    logWithTimestamp("error", "Erreur récupération email utilisateur", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /send-newsletter
+ * Envoie une newsletter à tous les abonnés
+ * Body: { subject, html }
+ */
+app.post("/send-newsletter", async (req, res) => {
+  const { subject, html } = req.body;
+
+  logWithTimestamp("info", "=== ENVOI NEWSLETTER ===");
+  logWithTimestamp("info", "Données reçues", { subject });
+
+  if (!subject) {
+    return res.status(400).json({ error: "Le sujet est requis" });
+  }
+
+  if (!html) {
+    return res.status(400).json({ error: "Le contenu HTML est requis" });
+  }
+
+  try {
+    // Récupérer les emails des utilisateurs abonnés à la newsletter
+    const { data: subscribers, error: subscribersError } = await supabase.from(
+      "newsletter_subscribers"
+    ).select(`
+        users(user_email)
+      `);
+
+    if (subscribersError) {
+      logWithTimestamp("error", "Erreur détaillée récupération abonnés", {
+        message: subscribersError.message,
+        details: subscribersError.details,
+        hint: subscribersError.hint,
+      });
+      return res.status(500).json({
+        error: "Erreur récupération abonnés",
+        details: subscribersError.message,
+      });
+    }
+
+    if (!subscribers || subscribers.length === 0) {
+      logWithTimestamp("info", "Aucun abonné trouvé");
+      return res.status(404).json({ error: "Aucun abonné trouvé" });
+    }
+
+    // Extraire les emails des utilisateurs
+    const subscribersEmails = subscribers.map(
+      (subscriber) => subscriber.users.user_email
+    );
+
+    let sentCount = 0;
+    let errorCount = 0;
+
+    // Envoyer la newsletter à chaque abonné
+    for (const email of subscribersEmails) {
+      const success = await sendEmail(email, subject, html);
+      if (success) {
+        sentCount++;
+      } else {
+        errorCount++;
+      }
+    }
+
+    logWithTimestamp("info", "Newsletter envoyée avec succès", {
+      sent: sentCount,
+      errors: errorCount,
+      total: subscribers.length,
+    });
+
+    res.json({
+      success: true,
+      message: "Newsletter envoyée avec succès",
+      stats: {
+        sent: sentCount,
+        errors: errorCount,
+        total: subscribers.length,
+      },
+    });
+  } catch (error) {
+    logWithTimestamp("error", "Erreur envoi newsletter", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========================
 // GESTION D'ERREURS
 // ========================
 
 // Gestionnaire d'erreurs global
-app.use((err, req, res, next) => {
-  logWithTimestamp("error", "Erreur non gérée", {
-    error: err.message,
-    stack: err.stack,
-    url: req.url,
-    method: req.method,
-  });
-
-  res.status(500).json({
-    success: false,
-    error: "Erreur interne du serveur",
-    message:
-      process.env.NODE_ENV === "development"
-        ? err.message
-        : "Une erreur est survenue",
-  });
-});
+app.use(errorHandler);
 
 // Route non trouvée
-app.use("*", (req, res) => {
-  logWithTimestamp("warn", "Route non trouvée", {
-    method: req.method,
-    url: req.originalUrl,
-  });
+app.use("*", notFoundHandler);
 
-  res.status(404).json({
-    success: false,
-    error: "Route non trouvée",
-    availableRoutes: ["POST /contact", "GET /contact/test", "GET /health"],
-  });
-});
+// ========================
+// DÉMARRAGE SERVEUR
+// ========================
 
 async function startServer() {
   try {
@@ -3619,7 +3476,10 @@ async function startServer() {
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
       logWithTimestamp("info", `📧 Email: ${FROM_EMAIL} → ${CONTACT_EMAIL}`);
-      logWithTimestamp("info", "✅ Backend Novapsy - Focus Formulaire Contact");
+      logWithTimestamp(
+        "info",
+        "✅ Backend Novapsy - Version Refactorisée (shared + config)"
+      );
     });
   } catch (error) {
     logWithTimestamp("error", "💥 Erreur critique au démarrage", error);
@@ -3637,10 +3497,6 @@ process.on("SIGTERM", () => {
   logWithTimestamp("info", "🛑 Arrêt serveur...");
   process.exit(0);
 });
-
-// ========================
-// DÉMARRAGE SERVEUR
-// ========================
 
 // Démarrage
 startServer();

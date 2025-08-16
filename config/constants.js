@@ -1,6 +1,6 @@
 // Configuration du serveur
 const PORT = process.env.PORT || 3001;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
 // Prix des produits Stripe
@@ -18,29 +18,29 @@ const PRICES = {
 // Détails des formations
 const TRAININGS = {
   price_1RZKxz05Uibkj68MfCpirZlH: {
-    name: 'PSSM',
-    full_name: 'Premiers Secours en Santé Mentale',
+    name: "PSSM",
+    full_name: "Premiers Secours en Santé Mentale",
     base_price: 250,
     member_discount: 35,
-    duration: 20,
-    training_type: 'Premiers Secours en Santé Mentale',
+    duration: 14,
+    training_type: "Premiers Secours en Santé Mentale",
   },
   price_1RT2Gi05Uibkj68MuYaG5HZn: {
-    name: 'VSS',
-    full_name: 'Violences Sexistes et Sexuelles',
+    name: "VSS",
+    full_name: "Violences Sexistes et Sexuelles",
     base_price: 50,
     member_discount: 15,
-    duration: 12,
-    training_type: 'Violences Sexistes et Sexuelles',
+    duration: 7,
+    training_type: "Violences Sexistes et Sexuelles",
   },
 };
 
 // Origines autorisées pour CORS
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173",
 ];
 
 module.exports = {
@@ -49,5 +49,5 @@ module.exports = {
   WEBHOOK_SECRET,
   PRICES,
   TRAININGS,
-  ALLOWED_ORIGINS
+  ALLOWED_ORIGINS,
 };
