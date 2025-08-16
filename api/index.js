@@ -412,6 +412,7 @@ async function updateUserStatusToMembership(userId, statusId) {
       statusId,
     });
 
+    // Utiliser la fonction RPC maintenant qu'elle est réparée
     const { error: statusError } = await supabase.rpc(
       "set_user_status_membership",
       {
@@ -421,25 +422,25 @@ async function updateUserStatusToMembership(userId, statusId) {
     );
 
     if (statusError) {
-      logWithTimestamp(
-        "warn",
-        "Erreur mise à jour statut utilisateur",
-        statusError
-      );
-      return false;
-    } else {
-      logWithTimestamp("info", "Statut utilisateur mis à jour avec succès", {
+      logWithTimestamp("error", "Erreur RPC set_user_status_membership", {
         userId,
         statusId,
+        error: statusError.message,
+        code: statusError.code,
       });
-      return true;
+      return false;
     }
+
+    logWithTimestamp("info", "Statut utilisateur mis à jour avec succès", {
+      userId,
+      statusId,
+    });
+    return true;
   } catch (error) {
-    logWithTimestamp("warn", "Erreur appel fonction statut", error);
+    logWithTimestamp("error", "Exception mise à jour statut", error);
     return false;
   }
 }
-
 // ========================
 // FONCTIONS STRIPE AMÉLIORÉES POUR LES REÇUS
 // ========================
