@@ -4,7 +4,7 @@ const express = require("express");
 // Configuration imports
 const { PORT, FRONTEND_URL, WEBHOOK_SECRET } = require("./config/constants");
 const { supabase } = require("./config/database");
-const { resend, FROM_EMAIL, CONTACT_EMAIL } = require("./config/email");
+const { CONTACT_EMAIL } = require("./config/email");
 const { stripe } = require("./config/stripe");
 
 // Shared utilities imports
@@ -28,6 +28,16 @@ const {
 } = require("./memberships/membershipService");
 const membershipRoutes = require("./memberships/membershipRoutes");
 
+// Email modules imports
+const {
+  sendEmailWithRetry,
+  sendContactEmail,
+  sendPreventionRequest,
+  testPreventionRequest,
+  sendNewsletter,
+  sendTrainingPurchaseConfirmationEmail,
+} = require("./emails");
+
 const app = express();
 
 // ========================
@@ -48,123 +58,8 @@ app.use(corsMiddleware);
 app.use("/", membershipRoutes);
 
 // ========================
-// FONCTIONS UTILITAIRES RESTANTES
-// ========================
-
-/**
- * Envoie un email via Resend
- * @param {string} to - Email du destinataire
- * @param {string} subject - Sujet de l'email
- * @param {string} html - Contenu HTML de l'email
- * @returns {Promise<boolean>} Succès de l'envoi
- */
-async function sendEmail(to, subject, html) {
-  try {
-    logWithTimestamp("info", "Envoi email", { to, subject });
-
-    if (!to || !to.includes("@")) {
-      logWithTimestamp("error", "Email invalide", { to });
-      return false;
-    }
-
-    const result = await resend.emails.send({
-      from: FROM_EMAIL,
-      to: to,
-      subject: subject,
-      html: html,
-    });
-
-    if (result.data && result.data.id) {
-      logWithTimestamp("info", "✅ Email envoyé avec succès", {
-        to,
-        subject,
-        messageId: result.data.id,
-      });
-      return true;
-    } else {
-      logWithTimestamp("error", "❌ Résultat Resend suspect", {
-        to,
-        subject,
-        result: result,
-      });
-      return false;
-    }
-  } catch (error) {
-    logWithTimestamp("error", "❌ Erreur envoi email", {
-      to,
-      subject,
-      error: error.message,
-    });
-    return false;
-  }
-}
-
-// ========================
 // FONCTIONS MÉTIER - FORMATIONS
 // ========================
-
-/**
- * Envoie un email de confirmation d'achat de formation
- * @param {string} userId - UUID de l'utilisateur
- * @param {object} purchaseData - Données de l'achat
- * @param {object} trainingDetails - Détails de la formation
- * @returns {Promise<boolean>} Succès de l'envoi
- */
-async function sendTrainingPurchaseConfirmationEmail(
-  userId,
-  purchaseData,
-  trainingDetails
-) {
-  try {
-    const userEmail = await getMailByUser(userId);
-    if (!userEmail) {
-      logWithTimestamp(
-        "warn",
-        "Email utilisateur non trouvé pour confirmation formation",
-        { userId }
-      );
-      return false;
-    }
-
-    const subject = `Confirmation d'achat - Formation ${trainingDetails.name}`;
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Votre formation a été achetée avec succès !</h2>
-        
-        <p>Nous vous confirmons l'achat de votre formation.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="margin-top: 0; color: #333;">Détails de votre achat :</h3>
-          <p><strong>Formation :</strong> ${trainingDetails.full_name}</p>
-          <p><strong>Durée :</strong> ${trainingDetails.duration} heures</p>
-          <p><strong>Prix payé :</strong> ${purchaseData.purchase_amount}€</p>
-          ${
-            purchaseData.member_discount > 0
-              ? `<p><strong>Réduction adhérent :</strong> -${purchaseData.member_discount}€</p>`
-              : ""
-          }
-          <p><strong>Date d'achat :</strong> ${new Date(
-            purchaseData.purchase_date
-          ).toLocaleDateString("fr-FR")}</p>
-        </div>
-        
-        <p>Vous recevrez prochainement les informations concernant l'organisation de votre formation.</p>
-        
-        <p>Si vous avez des questions, n'hésitez pas à nous contacter.</p>
-        
-        <p>Cordialement,<br>L'équipe Novapsy</p>
-      </div>
-    `;
-
-    return await sendEmail(userEmail, subject, html);
-  } catch (error) {
-    logWithTimestamp("error", "Erreur envoi email confirmation formation", {
-      userId,
-      error: error.message,
-    });
-    return false;
-  }
-}
 
 /**
  * Crée un achat de formation
@@ -274,7 +169,7 @@ async function createTrainingPurchase(metadata, session) {
       amount: purchase.purchase_amount,
     });
 
-    // Envoi email de confirmation
+    // Envoi email de confirmation via module refactorisé
     await sendTrainingPurchaseConfirmationEmail(
       userId,
       purchase,
@@ -298,615 +193,6 @@ async function createTrainingPurchase(metadata, session) {
   }
 }
 
-/**
- * Validation d'email
- */
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-/**
- * Validation des données du formulaire de contact
- */
-function validateContactData(data) {
-  const { name, email, phone, message } = data;
-  const errors = {};
-
-  // Validation du nom
-  if (!name || name.trim().length < 2) {
-    errors.name = "Le nom doit contenir au moins 2 caractères";
-  }
-
-  // Validation de l'email
-  if (!email || !isValidEmail(email)) {
-    errors.email = "Format d'email invalide";
-  }
-
-  // Validation du message
-  if (!message || message.trim().length < 10) {
-    errors.message = "Le message doit contenir au moins 10 caractères";
-  }
-
-  if (message && message.length > 5000) {
-    errors.message = "Le message ne peut pas dépasser 5000 caractères";
-  }
-
-  // Validation du téléphone (optionnel)
-  if (phone && !/^[\d\s\-+().]+$/.test(phone)) {
-    errors.phone = "Format de téléphone invalide";
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-  };
-}
-
-// ========================
-// FONCTIONS DE VALIDATION DEMANDE PRÉVENTION
-// ========================
-
-/**
- * Validation des données de demande de prévention
- */
-function validatePreventionRequest(data) {
-  const { dates, durees, lieu, publicConcerne, category } = data;
-  const errors = {};
-
-  // Validation des champs obligatoires
-  if (!dates || dates.trim().length < 3) {
-    errors.dates = "Les dates souhaitées sont requises (minimum 3 caractères)";
-  }
-
-  if (!durees || durees.trim().length < 2) {
-    errors.durees = "La durée est requise (minimum 2 caractères)";
-  }
-
-  if (!lieu || lieu.trim().length < 2) {
-    errors.lieu = "Le lieu est requis (minimum 2 caractères)";
-  }
-
-  if (!publicConcerne || publicConcerne.trim().length < 3) {
-    errors.publicConcerne =
-      "Le public concerné est requis (minimum 3 caractères)";
-  }
-
-  if (!category || !category.nom) {
-    errors.category = "La catégorie de prévention est requise";
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors,
-  };
-}
-
-/**
- * Détermine les couleurs selon le thème de prévention
- */
-function getPreventionThemeColors(categoryName) {
-  const name = categoryName.toLowerCase();
-
-  // Violet pour psycho
-  if (
-    name.includes("psycho") ||
-    name.includes("mental") ||
-    name.includes("stress") ||
-    name.includes("burnout") ||
-    name.includes("anxiété") ||
-    name.includes("dépression")
-  ) {
-    return {
-      primary: "#8b5cf6", // violet-500
-      secondary: "#7c3aed", // violet-600
-      gradient: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
-    };
-  }
-
-  // Rose pour sexualité
-  if (
-    name.includes("sex") ||
-    name.includes("intimité") ||
-    name.includes("couple") ||
-    name.includes("genre") ||
-    name.includes("orientation")
-  ) {
-    return {
-      primary: "#ec4899", // pink-500
-      secondary: "#db2777", // pink-600
-      gradient: "linear-gradient(135deg, #ec4899 0%, #db2777 100%)",
-    };
-  }
-
-  // Bleu foncé pour handicaps invisibles
-  if (
-    name.includes("handicap") ||
-    name.includes("invisible") ||
-    name.includes("accessibilité") ||
-    name.includes("inclusion") ||
-    name.includes("différence")
-  ) {
-    return {
-      primary: "#1e40af", // blue-800
-      secondary: "#1e3a8a", // blue-900
-      gradient: "linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)",
-    };
-  }
-
-  // Couleur par défaut (vert)
-  return {
-    primary: "#10b981", // emerald-500
-    secondary: "#059669", // emerald-600
-    gradient: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-  };
-}
-
-// ========================
-// FONCTIONS EMAIL
-// ========================
-
-/**
- * Génère le HTML pour l'email de contact
- */
-function generateContactEmailHTML(contactData) {
-  const { name, email, phone, message } = contactData;
-
-  return `
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Nouveau message de contact - Novapsy</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc;">
-      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-        
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 600;">
-            📧 Nouveau Message de Contact
-          </h1>
-          <p style="color: rgba(255, 255, 255, 0.9); margin: 8px 0 0 0; font-size: 16px;">
-            Site web Novapsy
-          </p>
-        </div>
-
-        <!-- Content -->
-        <div style="padding: 40px 30px;">
-          
-          <!-- Contact Information -->
-          <div style="background-color: #f8fafc; border-radius: 12px; padding: 25px; margin-bottom: 30px; border-left: 4px solid #667eea;">
-            <h2 style="color: #2d3748; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">
-              👤 Informations du contact
-            </h2>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 100px; font-weight: 600; color: #4a5568;">Nom :</span>
-              <span style="color: #2d3748; font-size: 16px;">${name}</span>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 100px; font-weight: 600; color: #4a5568;">Email :</span>
-              <a href="mailto:${email}" style="color: #667eea; text-decoration: none; font-size: 16px;">${email}</a>
-            </div>
-            
-            ${
-              phone
-                ? `
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 100px; font-weight: 600; color: #4a5568;">Téléphone :</span>
-              <a href="tel:${phone}" style="color: #667eea; text-decoration: none; font-size: 16px;">${phone}</a>
-            </div>
-            `
-                : ""
-            }
-            
-            <div style="margin-bottom: 0;">
-              <span style="display: inline-block; width: 100px; font-weight: 600; color: #4a5568;">Date :</span>
-              <span style="color: #2d3748; font-size: 16px;">${new Date().toLocaleString(
-                "fr-FR",
-                {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }
-              )}</span>
-            </div>
-          </div>
-
-          <!-- Message -->
-          <div style="margin-bottom: 30px;">
-            <h2 style="color: #2d3748; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">
-              💬 Message
-            </h2>
-            <div style="background-color: #ffffff; border: 2px solid #e2e8f0; border-radius: 12px; padding: 25px;">
-              <div style="color: #2d3748; line-height: 1.7; font-size: 16px; white-space: pre-wrap;">${message}</div>
-            </div>
-          </div>
-
-          <!-- Action Button -->
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="mailto:${email}?subject=Re: Votre message sur Novapsy" 
-               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
-              📧 Répondre directement
-            </a>
-          </div>
-
-          <!-- Quick Response -->
-          <div style="background-color: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; padding: 20px; text-align: center;">
-            <p style="margin: 0; color: #2f855a; font-size: 14px;">
-              <strong>💡 Réponse rapide :</strong> Cliquez sur "Répondre" dans votre client email pour répondre directement à ${name}
-            </p>
-          </div>
-
-        </div>
-
-        <!-- Footer -->
-        <div style="background-color: #2d3748; color: #a0aec0; text-align: center; padding: 25px;">
-          <p style="margin: 0; font-size: 14px;">
-            Email généré automatiquement par le formulaire de contact du site Novapsy
-          </p>
-          <p style="margin: 8px 0 0 0; font-size: 12px; opacity: 0.8;">
-            Ne pas répondre à cet email - Répondre directement au contact
-          </p>
-        </div>
-
-      </div>
-    </body>
-    </html>
-  `;
-}
-
-/**
- * Envoie un email via Resend avec retry
- */
-async function sendEmailWithRetry(to, subject, html, options = {}) {
-  const maxRetries = 3;
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logWithTimestamp(
-        "info",
-        `Tentative ${attempt}/${maxRetries} d'envoi email`,
-        { to, subject }
-      );
-
-      const emailData = {
-        from: FROM_EMAIL,
-        to: to,
-        subject: subject,
-        html: html,
-        ...options,
-      };
-
-      const result = await resend.emails.send(emailData);
-
-      if (result.data && result.data.id) {
-        logWithTimestamp("info", "✅ Email envoyé avec succès", {
-          to,
-          messageId: result.data.id,
-          attempt,
-        });
-        return {
-          success: true,
-          messageId: result.data.id,
-          attempt,
-        };
-      }
-
-      if (result.error) {
-        lastError = result.error;
-        logWithTimestamp("error", `❌ Erreur Resend (tentative ${attempt})`, {
-          to,
-          error: result.error,
-        });
-      }
-    } catch (error) {
-      lastError = error.message;
-      logWithTimestamp(
-        "error",
-        `❌ Exception envoi email (tentative ${attempt})`,
-        {
-          to,
-          error: error.message,
-        }
-      );
-    }
-
-    // Attendre avant retry (sauf dernière tentative)
-    if (attempt < maxRetries) {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
-    }
-  }
-
-  logWithTimestamp("error", "💥 Échec définitif envoi email", {
-    to,
-    totalAttempts: maxRetries,
-    lastError,
-  });
-
-  return {
-    success: false,
-    error: lastError,
-    totalAttempts: maxRetries,
-  };
-}
-
-/**
- * Génère l'email de confirmation pour l'utilisateur
- */
-function generateConfirmationEmailHTML(userName, userMessage) {
-  return `
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Confirmation - Message reçu</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc;">
-      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-        
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 30px; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 600;">
-            ✅ Message bien reçu !
-          </h1>
-          <p style="color: rgba(255, 255, 255, 0.9); margin: 8px 0 0 0; font-size: 16px;">
-            Merci pour votre message
-          </p>
-        </div>
-
-        <!-- Content -->
-        <div style="padding: 40px 30px;">
-          
-          <p style="font-size: 18px; color: #2d3748; margin: 0 0 20px 0;">
-            Bonjour <strong>${userName}</strong>,
-          </p>
-          
-          <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin: 0 0 25px 0;">
-            Nous avons bien reçu votre message et vous remercions de nous avoir contactés. 
-            Notre équipe vous répondra dans les plus brefs délais.
-          </p>
-
-          <!-- Message Quote -->
-          <div style="background-color: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 20px; margin: 25px 0;">
-            <p style="margin: 0; color: #4a5568; font-style: italic; font-size: 15px;">
-              "${userMessage.length > 200 ? userMessage.substring(0, 200) + "..." : userMessage}"
-            </p>
-          </div>
-
-          <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin: 25px 0;">
-            Si votre demande est urgente, vous pouvez également nous contacter directement à 
-            <a href="mailto:contact@novapsy.info" style="color: #667eea; text-decoration: none;">contact@novapsy.info</a>
-          </p>
-
-          <p style="font-size: 16px; color: #2d3748; margin: 25px 0 0 0;">
-            Cordialement,<br>
-            <strong>L'équipe Novapsy</strong>
-          </p>
-
-        </div>
-
-        <!-- Footer -->
-        <div style="background-color: #2d3748; color: #a0aec0; text-align: center; padding: 25px;">
-          <p style="margin: 0; font-size: 14px;">
-            Ceci est un email automatique de confirmation
-          </p>
-          <p style="margin: 8px 0 0 0; font-size: 12px; opacity: 0.8;">
-            Pour toute question, contactez-nous à contact@novapsy.info
-          </p>
-        </div>
-
-      </div>
-    </body>
-    </html>
-  `;
-}
-
-/**
- * Génère le HTML pour l'email de demande de prévention
- */
-function generatePreventionRequestEmailHTML(requestData) {
-  const {
-    dates,
-    durees,
-    lieu,
-    publicConcerne,
-    thematiquesEnvisagees,
-    formeEnvisagee,
-    message,
-    category,
-    timestamp,
-  } = requestData;
-
-  // Obtenir les couleurs du thème
-  const themeColors = getPreventionThemeColors(category.nom);
-
-  return `
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Nouvelle demande de prévention - ${category.nom}</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc;">
-      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-        
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 600;">
-            🎯 Nouvelle Demande de Prévention
-          </h1>
-          <p style="color: rgba(255, 255, 255, 0.9); margin: 8px 0 0 0; font-size: 16px;">
-            Catalogue des Préventions - Novapsy
-          </p>
-        </div>
-
-        <!-- Content -->
-        <div style="padding: 40px 30px;">
-          
-          <!-- Prevention Category -->
-          <div style="background: ${themeColors.gradient}; border-radius: 12px; padding: 25px; margin-bottom: 30px; color: white;">
-            <h2 style="margin: 0 0 15px 0; font-size: 24px; font-weight: 600;">
-              📚 ${category.nom}
-            </h2>
-            ${
-              category.description
-                ? `
-              <p style="margin: 0; font-size: 16px; opacity: 0.9; line-height: 1.5;">
-                ${category.description}
-              </p>
-            `
-                : ""
-            }
-          </div>
-
-          <!-- Request Details -->
-          <div style="background-color: #f8fafc; border-radius: 12px; padding: 25px; margin-bottom: 30px; border-left: 4px solid #667eea;">
-            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">
-              📋 Détails de la demande
-            </h3>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Dates souhaitées :</span>
-              <span style="color: #2d3748; font-size: 16px;">${dates}</span>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Durée :</span>
-              <span style="color: #2d3748; font-size: 16px;">${durees}</span>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Lieu :</span>
-              <span style="color: #2d3748; font-size: 16px;">${lieu}</span>
-            </div>
-            
-            <div style="margin-bottom: 0;">
-              <span style="display: inline-block; width: 150px; font-weight: 600; color: #4a5568;">Public concerné :</span>
-              <span style="color: #2d3748; font-size: 16px;">${publicConcerne}</span>
-            </div>
-          </div>
-
-          ${
-            thematiquesEnvisagees || formeEnvisagee
-              ? `
-          <!-- Optional Details -->
-          <div style="margin-bottom: 30px;">
-            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">
-              🔧 Personnalisation demandée
-            </h3>
-            
-            ${
-              thematiquesEnvisagees
-                ? `
-            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 15px;">
-              <h4 style="margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #4a5568;">
-                Thématiques envisagées :
-              </h4>
-              <div style="color: #2d3748; line-height: 1.6; font-size: 15px;">
-                ${thematiquesEnvisagees.replace(/\n/g, "<br>")}
-              </div>
-            </div>
-            `
-                : ""
-            }
-            
-            ${
-              formeEnvisagee
-                ? `
-            <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
-              <h4 style="margin: 0 0 10px 0; font-size: 16px; font-weight: 600; color: #4a5568;">
-                Forme envisagée :
-              </h4>
-              <div style="color: #2d3748; line-height: 1.6; font-size: 15px;">
-                ${formeEnvisagee.replace(/\n/g, "<br>")}
-              </div>
-            </div>
-            `
-                : ""
-            }
-          </div>
-          `
-              : ""
-          }
-
-          ${
-            message
-              ? `
-          <!-- Additional Message -->
-          <div style="margin-bottom: 30px;">
-            <h3 style="color: #2d3748; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">
-              💬 Message complémentaire
-            </h3>
-            <div style="background-color: #ffffff; border: 2px solid #e2e8f0; border-radius: 12px; padding: 25px;">
-              <div style="color: #2d3748; line-height: 1.7; font-size: 16px; white-space: pre-wrap;">${message}</div>
-            </div>
-          </div>
-          `
-              : ""
-          }
-
-          <!-- Metadata -->
-          <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin-bottom: 30px;">
-            <h4 style="margin: 0 0 15px 0; color: #0369a1; font-size: 16px; font-weight: 600;">
-              ℹ️ Informations de la demande
-            </h4>
-            <div style="color: #0369a1; font-size: 14px;">
-              <p style="margin: 5px 0;">
-                <strong>Date de demande :</strong> ${new Date(
-                  timestamp
-                ).toLocaleString("fr-FR", {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </p>
-            </div>
-          </div>
-
-          <!-- Action Button -->
-          <div style="text-align: center; margin: 30px 0;">
-            <div style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; border-radius: 8px; font-weight: 600; font-size: 16px;">
-              📞 Traiter cette demande de prévention
-            </div>
-          </div>
-
-          <!-- Contact Info -->
-          <div style="background-color: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; padding: 20px; text-align: center;">
-            <p style="margin: 0; color: #2f855a; font-size: 14px;">
-              <strong>💡 Action recommandée :</strong> Contacter le demandeur pour finaliser les modalités de la formation
-            </p>
-          </div>
-
-        </div>
-
-        <!-- Footer -->
-        <div style="background-color: #2d3748; color: #a0aec0; text-align: center; padding: 25px;">
-          <p style="margin: 0; font-size: 14px;">
-            Email généré automatiquement par le Catalogue des Préventions - Novapsy
-          </p>
-          <p style="margin: 8px 0 0 0; font-size: 12px; opacity: 0.8;">
-            Cette demande provient du formulaire de prévention personnalisée
-          </p>
-        </div>
-
-      </div>
-    </body>
-    </html>
-  `;
-}
-
 // ========================
 // ROUTES API - FORMATIONS
 // ========================
@@ -916,8 +202,6 @@ function generatePreventionRequestEmailHTML(requestData) {
  * Crée une session de paiement pour une formation avec réduction adhérent
  * Body: { priceId, userId, trainingId }
  */
-// Ajoutez ces logs dans votre route /create-training-checkout après les variables existantes
-
 app.post("/create-training-checkout", async (req, res) => {
   const { priceId, userId, trainingId } = req.body;
 
@@ -968,7 +252,7 @@ app.post("/create-training-checkout", async (req, res) => {
                 duration: trainingDetails.duration.toString(),
               },
             },
-            unit_amount: Math.round(finalPrice * 100), // VÉRIFIEZ QUE finalPrice EST CORRECT
+            unit_amount: Math.round(finalPrice * 100),
           },
           quantity: 1,
         },
@@ -1014,7 +298,7 @@ app.post("/create-training-checkout", async (req, res) => {
       sessionId: session.id,
       originalPrice: trainingDetails.base_price || trainingDetails.price,
       finalPrice: finalPrice,
-      stripeAmount: Math.round(finalPrice * 100), // MONTANT ENVOYÉ À STRIPE
+      stripeAmount: Math.round(finalPrice * 100),
       discount: isMember ? trainingDetails.member_discount || 0 : 0,
       isMember,
       customerCreation: "always",
@@ -1260,147 +544,26 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ========================
-// ROUTE FORMULAIRE DE CONTACT
+// ROUTES EMAIL REFACTORISÉES
 // ========================
 
 /**
  * POST /contact
- * Traite le formulaire de contact et envoie un email
+ * Traite le formulaire de contact via module refactorisé
  */
 app.post("/contact", async (req, res) => {
   logWithTimestamp("info", "🔥 === NOUVEAU MESSAGE DE CONTACT ===");
 
-  const { name, email, phone, message } = req.body;
-
-  logWithTimestamp("info", "📋 Données reçues", {
-    name: name || "MANQUANT",
-    email: email || "MANQUANT",
-    phone: phone || "Non fourni",
-    messageLength: message ? message.length : 0,
-  });
-
-  // Validation des données
-  const validation = validateContactData({ name, email, phone, message });
-
-  if (!validation.isValid) {
-    logWithTimestamp("warn", "❌ Validation échouée", validation.errors);
-    return res.status(400).json({
-      success: false,
-      error: "Données invalides",
-      errors: validation.errors,
-    });
-  }
-
   try {
-    // Préparer les données propres
-    const cleanData = {
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone ? phone.trim() : null,
-      message: message.trim(),
-    };
+    const result = await sendContactEmail(req.body);
 
-    // Générer l'email HTML
-    const emailSubject = `[Site Web] Nouveau message de ${cleanData.name}`;
-    const emailHTML = generateContactEmailHTML(cleanData);
-
-    logWithTimestamp(
-      "info",
-      "🚀 ENVOI EMAIL PRINCIPAL vers contact@novapsy.info"
-    );
-
-    // Envoyer l'email principal avec reply-to
-    const emailResult = await sendEmailWithRetry(
-      CONTACT_EMAIL,
-      emailSubject,
-      emailHTML,
-      {
-        reply_to: cleanData.email, // Permet de répondre directement
-        headers: {
-          "X-Priority": "1", // Haute priorité
-          "X-Contact-Form": "novapsy-website",
-        },
-      }
-    );
-
-    if (emailResult.success) {
-      logWithTimestamp("info", "🎉 SUCCESS - Email principal envoyé", {
-        messageId: emailResult.messageId,
-        attempt: emailResult.attempt,
-      });
-
-      // Envoyer email de confirmation en arrière-plan (optionnel)
-      setImmediate(async () => {
-        try {
-          const confirmationSubject = "Confirmation - Message reçu par Novapsy";
-          const confirmationHTML = generateConfirmationEmailHTML(
-            cleanData.name,
-            cleanData.message
-          );
-
-          const confirmResult = await sendEmailWithRetry(
-            cleanData.email,
-            confirmationSubject,
-            confirmationHTML
-          );
-
-          if (confirmResult.success) {
-            logWithTimestamp("info", "✅ Confirmation utilisateur envoyée", {
-              to: cleanData.email,
-              messageId: confirmResult.messageId,
-            });
-          } else {
-            logWithTimestamp(
-              "warn",
-              "⚠️ Échec confirmation utilisateur (non critique)",
-              {
-                to: cleanData.email,
-                error: confirmResult.error,
-              }
-            );
-          }
-        } catch (error) {
-          logWithTimestamp(
-            "warn",
-            "⚠️ Exception confirmation utilisateur (ignorée)",
-            {
-              error: error.message,
-            }
-          );
-        }
-      });
-
-      // Réponse de succès
-      return res.status(200).json({
-        success: true,
-        message: "Votre message a été envoyé avec succès !",
-        details: "Nous vous répondrons dans les plus brefs délais.",
-        messageId: emailResult.messageId,
-      });
+    if (result.success) {
+      return res.status(200).json(result);
     } else {
-      // Échec de l'email principal
-      logWithTimestamp(
-        "error",
-        "💥 ÉCHEC CRITIQUE - Email principal non envoyé",
-        {
-          error: emailResult.error,
-          totalAttempts: emailResult.totalAttempts,
-        }
-      );
-
-      return res.status(500).json({
-        success: false,
-        error: "Impossible d'envoyer votre message",
-        details:
-          "Veuillez réessayer ou nous contacter directement à contact@novapsy.info",
-        technical: {
-          attempts: emailResult.totalAttempts,
-          lastError: emailResult.error,
-        },
-      });
+      return res.status(result.errors ? 400 : 500).json(result);
     }
   } catch (error) {
-    logWithTimestamp("error", "💥 EXCEPTION CRITIQUE dans formulaire contact", {
+    logWithTimestamp("error", "💥 EXCEPTION CRITIQUE dans route contact", {
       error: error.message,
       stack: error.stack,
     });
@@ -1414,145 +577,25 @@ app.post("/contact", async (req, res) => {
   }
 });
 
-// ========================
-// ROUTE DEMANDE DE PRÉVENTION
-// ========================
-
 /**
  * POST /api/send-prevention-request
- * Traite une demande de prévention personnalisée et envoie un email
+ * Traite une demande de prévention via module refactorisé
  */
 app.post("/api/send-prevention-request", async (req, res) => {
   logWithTimestamp("info", "🎯 === NOUVELLE DEMANDE DE PRÉVENTION ===");
 
   const { to, subject, requestData } = req.body;
 
-  // Extraction des données de la requête
-  const {
-    dates,
-    durees,
-    lieu,
-    publicConcerne,
-    thematiquesEnvisagees,
-    formeEnvisagee,
-    message,
-    category,
-    timestamp,
-    source,
-  } = requestData || {};
-
-  logWithTimestamp("info", "📋 Données de demande reçues", {
-    category: category?.nom || "Non spécifiée",
-    dates: dates || "Non spécifiées",
-    lieu: lieu || "Non spécifié",
-    publicConcerne: publicConcerne || "Non spécifié",
-    hasThematiques: !!thematiquesEnvisagees,
-    hasForme: !!formeEnvisagee,
-    hasMessage: !!message,
-    source: source || "unknown",
-  });
-
-  // Validation des données
-  const validation = validatePreventionRequest(requestData || {});
-
-  if (!validation.isValid) {
-    logWithTimestamp(
-      "warn",
-      "❌ Validation demande prévention échouée",
-      validation.errors
-    );
-    return res.status(400).json({
-      success: false,
-      error: "Données de demande invalides",
-      errors: validation.errors,
-    });
-  }
-
   try {
-    // Préparer les données propres
-    const cleanData = {
-      dates: dates.trim(),
-      durees: durees.trim(),
-      lieu: lieu.trim(),
-      publicConcerne: publicConcerne.trim(),
-      thematiquesEnvisagees: thematiquesEnvisagees
-        ? thematiquesEnvisagees.trim()
-        : null,
-      formeEnvisagee: formeEnvisagee ? formeEnvisagee.trim() : null,
-      message: message ? message.trim() : null,
-      category,
-      timestamp: timestamp || new Date().toISOString(),
-      source: source || "prevention_catalog",
-    };
+    const result = await sendPreventionRequest(requestData, to, subject);
 
-    // Générer le sujet de l'email
-    const emailSubject =
-      subject || `[Prévention] Nouvelle demande - ${category.nom}`;
-
-    // Générer l'email HTML
-    const emailHTML = generatePreventionRequestEmailHTML(cleanData);
-
-    logWithTimestamp(
-      "info",
-      "🚀 ENVOI EMAIL DEMANDE PRÉVENTION vers contact@novapsy.info"
-    );
-
-    // Envoyer l'email avec retry
-    const emailResult = await sendEmailWithRetry(
-      to || CONTACT_EMAIL,
-      emailSubject,
-      emailHTML,
-      {
-        headers: {
-          "X-Priority": "1", // Haute priorité
-          "X-Contact-Form": "novapsy-prevention-catalog",
-          "X-Prevention-Category": category.nom,
-        },
-      }
-    );
-
-    if (emailResult.success) {
-      logWithTimestamp("info", "🎉 SUCCESS - Email demande prévention envoyé", {
-        category: category.nom,
-        messageId: emailResult.messageId,
-        attempt: emailResult.attempt,
-      });
-
-      // Réponse de succès
-      return res.status(200).json({
-        success: true,
-        message: "Votre demande de prévention a été envoyée avec succès !",
-        details:
-          "Notre équipe vous contactera rapidement pour finaliser votre formation personnalisée.",
-        messageId: emailResult.messageId,
-        category: category.nom,
-      });
+    if (result.success) {
+      return res.status(200).json(result);
     } else {
-      // Échec de l'email
-      logWithTimestamp(
-        "error",
-        "💥 ÉCHEC CRITIQUE - Email demande prévention non envoyé",
-        {
-          category: category.nom,
-          error: emailResult.error,
-          totalAttempts: emailResult.totalAttempts,
-        }
-      );
-
-      return res.status(500).json({
-        success: false,
-        error: "Impossible d'envoyer votre demande de prévention",
-        details:
-          "Veuillez réessayer ou nous contacter directement à contact@novapsy.info",
-        technical: {
-          attempts: emailResult.totalAttempts,
-          lastError: emailResult.error,
-        },
-      });
+      return res.status(result.errors ? 400 : 500).json(result);
     }
   } catch (error) {
-    logWithTimestamp("error", "💥 EXCEPTION CRITIQUE dans demande prévention", {
-      category: category?.nom || "unknown",
+    logWithTimestamp("error", "💥 EXCEPTION CRITIQUE dans route prévention", {
       error: error.message,
       stack: error.stack,
     });
@@ -1566,102 +609,22 @@ app.post("/api/send-prevention-request", async (req, res) => {
   }
 });
 
-// ========================
-// ROUTE DE TEST PRÉVENTION
-// ========================
-
 /**
  * POST /api/test-prevention-request
- * Test de la fonctionnalité de demande de prévention avec différents thèmes
+ * Test des demandes de prévention via module refactorisé
  */
 app.post("/api/test-prevention-request", async (req, res) => {
   logWithTimestamp("info", "🧪 === TEST DEMANDE PRÉVENTION ===");
 
+  const { theme } = req.body;
+
   try {
-    const { theme } = req.body; // Permet de tester différents thèmes
-
-    let testCategory;
-    switch (theme) {
-      case "psycho":
-        testCategory = {
-          id: 1,
-          nom: "Prévention du Burnout Psychologique",
-          description:
-            "Formation complète sur la prévention et la gestion du burnout et stress professionnel",
-        };
-        break;
-      case "sexualite":
-        testCategory = {
-          id: 2,
-          nom: "Sexualité et Bien-être",
-          description:
-            "Formation sur l'accompagnement en santé sexuelle et intimité",
-        };
-        break;
-      case "handicap":
-        testCategory = {
-          id: 3,
-          nom: "Handicaps Invisibles en Milieu Professionnel",
-          description:
-            "Sensibilisation et inclusion des handicaps invisibles au travail",
-        };
-        break;
-      default:
-        testCategory = {
-          id: 1,
-          nom: "Prévention Générale",
-          description: "Formation générale de prévention (couleur par défaut)",
-        };
-    }
-
-    const testRequestData = {
-      dates: "Semaine du 15 mars 2025",
-      durees: "2 jours, 14 heures",
-      lieu: "Paris ou en ligne",
-      publicConcerne: "Professionnels de santé mentale",
-      thematiquesEnvisagees:
-        "Techniques adaptées au thème\nApproche personnalisée",
-      formeEnvisagee: "Ateliers pratiques avec mises en situation",
-      message: `Nous souhaiterions une formation adaptée sur le thème : ${testCategory.nom}`,
-      category: testCategory,
-      timestamp: new Date().toISOString(),
-      source: "prevention_catalog_test",
-    };
-
-    const testHTML = generatePreventionRequestEmailHTML(testRequestData);
-
-    const result = await sendEmailWithRetry(
-      CONTACT_EMAIL,
-      `🧪 Test Demande Prévention ${testCategory.nom} - Novapsy`,
-      testHTML
-    );
+    const result = await testPreventionRequest(theme);
 
     if (result.success) {
-      logWithTimestamp("info", "✅ Test demande prévention envoyé avec succès");
-      return res.json({
-        success: true,
-        message: "Test de demande de prévention fonctionnel",
-        details: {
-          messageId: result.messageId,
-          from: FROM_EMAIL,
-          to: CONTACT_EMAIL,
-          attempt: result.attempt,
-          category: testRequestData.category.nom,
-          theme: theme || "default",
-          colors: getPreventionThemeColors(testCategory.nom),
-        },
-      });
+      return res.status(200).json(result);
     } else {
-      logWithTimestamp(
-        "error",
-        "❌ Test demande prévention échoué",
-        result.error
-      );
-      return res.status(500).json({
-        success: false,
-        error: "Test de demande de prévention défaillant",
-        details: result.error,
-      });
+      return res.status(500).json(result);
     }
   } catch (error) {
     logWithTimestamp("error", "💥 Exception test demande prévention", error);
@@ -1673,13 +636,9 @@ app.post("/api/test-prevention-request", async (req, res) => {
   }
 });
 
-// ========================
-// ROUTES DE TEST ET SANTÉ
-// ========================
-
 /**
  * GET /contact/test
- * Test de la configuration email
+ * Test de la configuration email via module refactorisé
  */
 app.get("/contact/test", async (req, res) => {
   logWithTimestamp("info", "🧪 === TEST CONFIGURATION EMAIL ===");
@@ -1690,14 +649,14 @@ app.get("/contact/test", async (req, res) => {
         <h2 style="color: #10b981;">🧪 Test de Configuration Email</h2>
         <p>✅ La configuration Resend fonctionne correctement</p>
         <p><strong>Date :</strong> ${new Date().toLocaleString("fr-FR")}</p>
-        <p><strong>From :</strong> ${FROM_EMAIL}</p>
         <p><strong>To :</strong> ${CONTACT_EMAIL}</p>
+        <p><strong>Module :</strong> emailCore.sendEmailWithRetry()</p>
       </div>
     `;
 
     const result = await sendEmailWithRetry(
       CONTACT_EMAIL,
-      "🧪 Test Configuration Resend - Novapsy",
+      "🧪 Test Configuration Resend - Novapsy (Refactorisé)",
       testHTML
     );
 
@@ -1705,12 +664,12 @@ app.get("/contact/test", async (req, res) => {
       logWithTimestamp("info", "✅ Test email envoyé avec succès");
       return res.json({
         success: true,
-        message: "Configuration email fonctionnelle",
+        message: "Configuration email fonctionnelle (modules refactorisés)",
         details: {
           messageId: result.messageId,
-          from: FROM_EMAIL,
           to: CONTACT_EMAIL,
           attempt: result.attempt,
+          module: "emails/emailCore.js",
         },
       });
     } else {
@@ -1731,6 +690,32 @@ app.get("/contact/test", async (req, res) => {
   }
 });
 
+/**
+ * POST /send-newsletter
+ * Envoie une newsletter via module refactorisé
+ */
+app.post("/send-newsletter", async (req, res) => {
+  logWithTimestamp("info", "=== ENVOI NEWSLETTER (REFACTORISÉ) ===");
+
+  const { subject, html } = req.body;
+
+  try {
+    const result = await sendNewsletter(subject, html);
+
+    if (result.success) {
+      return res.status(200).json(result);
+    } else {
+      return res.status(500).json(result);
+    }
+  } catch (error) {
+    logWithTimestamp("error", "Erreur envoi newsletter", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 // ========================
 // ROUTES DE SANTÉ ET DEBUG
 // ========================
@@ -1743,11 +728,10 @@ app.get("/health", (req, res) => {
   res.json({
     status: "OK",
     timestamp: new Date().toISOString(),
-    version: "2.1.0-refactored-memberships",
+    version: "2.2.0-emails-refactored",
     services: {
       email: {
         configured: !!process.env.RESEND_API_KEY,
-        from: FROM_EMAIL,
         to: CONTACT_EMAIL,
       },
       stripe: {
@@ -1764,13 +748,20 @@ app.get("/health", (req, res) => {
       prevention_requests: true,
       membership_management: true,
       training_purchases: true,
+      newsletter: true,
     },
     refactoring: {
       memberships: "✅ Refactorisé",
-      emails: "✅ Partiellement refactorisé",
+      emails: "✅ REFACTORISÉ COMPLET", // ← Mise à jour
       trainings: "⏳ En cours",
       contact: "⏳ En cours",
       prevention: "⏳ En cours",
+    },
+    modules: {
+      emails: "✅ 9 fichiers modulaires",
+      templates: "✅ Centralisés",
+      validation: "✅ Centralisée",
+      core: "✅ Avec retry logic",
     },
   });
 });
@@ -1778,7 +769,6 @@ app.get("/health", (req, res) => {
 /**
  * GET /user-email/:userId
  * Récupère l'email d'un utilisateur (pour debug)
- * Params: userId (UUID)
  */
 app.get("/user-email/:userId", async (req, res) => {
   const { userId } = req.params;
@@ -1793,89 +783,6 @@ app.get("/user-email/:userId", async (req, res) => {
     }
   } catch (error) {
     logWithTimestamp("error", "Erreur récupération email utilisateur", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * POST /send-newsletter
- * Envoie une newsletter à tous les abonnés
- * Body: { subject, html }
- */
-app.post("/send-newsletter", async (req, res) => {
-  const { subject, html } = req.body;
-
-  logWithTimestamp("info", "=== ENVOI NEWSLETTER ===");
-  logWithTimestamp("info", "Données reçues", { subject });
-
-  if (!subject) {
-    return res.status(400).json({ error: "Le sujet est requis" });
-  }
-
-  if (!html) {
-    return res.status(400).json({ error: "Le contenu HTML est requis" });
-  }
-
-  try {
-    // Récupérer les emails des utilisateurs abonnés à la newsletter
-    const { data: subscribers, error: subscribersError } = await supabase.from(
-      "newsletter_subscribers"
-    ).select(`
-        users(user_email)
-      `);
-
-    if (subscribersError) {
-      logWithTimestamp("error", "Erreur détaillée récupération abonnés", {
-        message: subscribersError.message,
-        details: subscribersError.details,
-        hint: subscribersError.hint,
-      });
-      return res.status(500).json({
-        error: "Erreur récupération abonnés",
-        details: subscribersError.message,
-      });
-    }
-
-    if (!subscribers || subscribers.length === 0) {
-      logWithTimestamp("info", "Aucun abonné trouvé");
-      return res.status(404).json({ error: "Aucun abonné trouvé" });
-    }
-
-    // Extraire les emails des utilisateurs
-    const subscribersEmails = subscribers.map(
-      (subscriber) => subscriber.users.user_email
-    );
-
-    let sentCount = 0;
-    let errorCount = 0;
-
-    // Envoyer la newsletter à chaque abonné
-    for (const email of subscribersEmails) {
-      const success = await sendEmail(email, subject, html);
-      if (success) {
-        sentCount++;
-      } else {
-        errorCount++;
-      }
-    }
-
-    logWithTimestamp("info", "Newsletter envoyée avec succès", {
-      sent: sentCount,
-      errors: errorCount,
-      total: subscribers.length,
-    });
-
-    res.json({
-      success: true,
-      message: "Newsletter envoyée avec succès",
-      stats: {
-        sent: sentCount,
-        errors: errorCount,
-        total: subscribers.length,
-      },
-    });
-  } catch (error) {
-    logWithTimestamp("error", "Erreur envoi newsletter", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1907,9 +814,6 @@ async function startServer() {
       process.exit(1);
     }
 
-    // Test rapide de la configuration email
-    logWithTimestamp("info", "🧪 Test rapide de la configuration email...");
-
     // Démarrage du serveur
     app.listen(PORT, () => {
       logWithTimestamp(
@@ -1917,10 +821,14 @@ async function startServer() {
         `🚀 Serveur démarré sur http://localhost:${PORT}`
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
-      logWithTimestamp("info", `📧 Email: ${FROM_EMAIL} → ${CONTACT_EMAIL}`);
+      logWithTimestamp("info", `📧 Email: ${CONTACT_EMAIL}`);
       logWithTimestamp(
         "info",
-        "✅ Backend Novapsy - Version Refactorisée (memberships complétés)"
+        "✅ Backend Novapsy - EMAILS REFACTORISÉS COMPLETS"
+      );
+      logWithTimestamp(
+        "info",
+        "📁 Modules emails: 9 fichiers modulaires avec templates centralisés"
       );
       logWithTimestamp(
         "info",
