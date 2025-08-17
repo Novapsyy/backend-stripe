@@ -11,11 +11,6 @@ const { stripe } = require("./config/stripe");
 const { logWithTimestamp } = require("./shared/logger");
 const { getMailByUser } = require("./shared/userUtils");
 const {
-  getPriceFromPriceId,
-  getTrainingDetails,
-  calculateDiscountedPrice,
-} = require("./shared/pricing");
-const {
   corsMiddleware,
   errorHandler,
   notFoundHandler,
@@ -35,8 +30,10 @@ const {
   sendPreventionRequest,
   testPreventionRequest,
   sendNewsletter,
-  sendTrainingPurchaseConfirmationEmail,
 } = require("./emails");
+
+// Training modules imports
+const { createTrainingPurchase, trainingRoutes } = require("./trainings");
 
 const app = express();
 
@@ -57,369 +54,8 @@ app.use(corsMiddleware);
 // Routes des adhésions
 app.use("/", membershipRoutes);
 
-// ========================
-// FONCTIONS MÉTIER - FORMATIONS
-// ========================
-
-/**
- * Crée un achat de formation
- * @param {object} metadata - Métadonnées de la session Stripe
- * @param {object} session - Session Stripe complétée
- * @returns {Promise<object>} Données de l'achat créé
- */
-async function createTrainingPurchase(metadata, session) {
-  const {
-    userId,
-    trainingId,
-    priceId,
-    originalPrice,
-    discountedPrice,
-    isMember,
-  } = metadata;
-
-  logWithTimestamp("info", "=== 🎓 DÉBUT CRÉATION ACHAT FORMATION ===");
-  logWithTimestamp("info", "📋 Metadata reçues", {
-    userId,
-    trainingId,
-    priceId,
-    originalPrice,
-    discountedPrice,
-    isMember,
-    sessionId: session.id,
-  });
-
-  try {
-    // Vérifier que l'achat n'existe pas déjà
-    const { data: existingPurchase, error: checkError } = await supabase
-      .from("trainings_purchase")
-      .select("purchase_id")
-      .eq("user_id", userId)
-      .eq("training_id", trainingId)
-      .eq("stripe_session_id", session.id)
-      .maybeSingle();
-
-    if (checkError && checkError.code !== "PGRST116") {
-      logWithTimestamp(
-        "error",
-        "Erreur vérification achat existant",
-        checkError
-      );
-      throw checkError;
-    }
-
-    if (existingPurchase) {
-      logWithTimestamp("warn", "⚠️ Achat déjà existant", {
-        purchase_id: existingPurchase.purchase_id,
-        session_id: session.id,
-      });
-      return existingPurchase;
-    }
-
-    // Récupérer les détails de la formation
-    const trainingDetails = getTrainingDetails(priceId);
-    if (!trainingDetails) {
-      throw new Error(`Formation non trouvée pour priceId: ${priceId}`);
-    }
-
-    logWithTimestamp("info", "📚 Détails formation", trainingDetails);
-
-    // Données à insérer
-    const purchaseData = {
-      user_id: userId,
-      training_id: trainingId,
-      purchase_date: new Date().toISOString(),
-      purchase_amount: parseFloat(discountedPrice),
-      original_price: parseFloat(originalPrice),
-      member_discount:
-        isMember === "true"
-          ? parseFloat(originalPrice) - parseFloat(discountedPrice)
-          : 0,
-      payment_status: "paid",
-      stripe_session_id: session.id,
-      hours_purchased: trainingDetails.duration,
-      hours_consumed: 0,
-    };
-
-    logWithTimestamp(
-      "info",
-      "💾 Données achat formation à insérer",
-      purchaseData
-    );
-
-    const { data: purchase, error: purchaseError } = await supabase
-      .from("trainings_purchase")
-      .insert(purchaseData)
-      .select()
-      .single();
-
-    if (purchaseError) {
-      logWithTimestamp("error", "❌ Erreur création achat formation", {
-        error: purchaseError.message,
-        code: purchaseError.code,
-        details: purchaseError.details,
-        purchaseData,
-      });
-      throw purchaseError;
-    }
-
-    logWithTimestamp("info", "✅ Achat formation créé avec succès", {
-      purchase_id: purchase.purchase_id,
-      user_id: purchase.user_id,
-      training_id: purchase.training_id,
-      amount: purchase.purchase_amount,
-    });
-
-    // Envoi email de confirmation via module refactorisé
-    await sendTrainingPurchaseConfirmationEmail(
-      userId,
-      purchase,
-      trainingDetails
-    );
-
-    logWithTimestamp(
-      "info",
-      "=== 🎉 FIN CRÉATION ACHAT FORMATION - SUCCÈS ==="
-    );
-    return purchase;
-  } catch (error) {
-    logWithTimestamp("error", "=== ❌ ERREUR CRÉATION ACHAT FORMATION ===", {
-      error: error.message,
-      code: error.code,
-      details: error.details,
-      metadata,
-      sessionId: session.id,
-    });
-    throw error;
-  }
-}
-
-// ========================
-// ROUTES API - FORMATIONS
-// ========================
-
-/**
- * POST /create-training-checkout
- * Crée une session de paiement pour une formation avec réduction adhérent
- * Body: { priceId, userId, trainingId }
- */
-app.post("/create-training-checkout", async (req, res) => {
-  const { priceId, userId, trainingId } = req.body;
-
-  logWithTimestamp("info", "=== CRÉATION SESSION FORMATION ===");
-  logWithTimestamp("info", "Données reçues", { priceId, userId, trainingId });
-
-  if (!priceId) return res.status(400).json({ error: "priceId manquant" });
-  if (!userId) return res.status(400).json({ error: "userId manquant" });
-  if (!trainingId)
-    return res.status(400).json({ error: "trainingId manquant" });
-
-  try {
-    const trainingDetails = getTrainingDetails(priceId);
-    logWithTimestamp("info", "🎓 Training details récupérés", trainingDetails);
-
-    if (!trainingDetails) {
-      return res.status(400).json({ error: "Formation non trouvée" });
-    }
-
-    const isMember = await checkIfUserIsMember(userId);
-    logWithTimestamp("info", "👤 Statut adhérent vérifié", {
-      userId,
-      isMember,
-    });
-
-    const finalPrice = calculateDiscountedPrice(trainingDetails, isMember);
-    logWithTimestamp("info", "💰 Prix calculé", {
-      originalPrice: trainingDetails.base_price || trainingDetails.price,
-      isMember,
-      finalPrice,
-      memberDiscount: trainingDetails.member_discount || 0,
-    });
-
-    // Récupérer l'email de l'utilisateur
-    const userEmail = await getMailByUser(userId);
-
-    const sessionConfig = {
-      mode: "payment",
-      line_items: [
-        {
-          price_data: {
-            currency: "eur",
-            product_data: {
-              name: `Formation ${trainingDetails.name}`,
-              description: `${trainingDetails.full_name} - ${trainingDetails.duration} heures`,
-              metadata: {
-                training_type: trainingDetails.training_type,
-                duration: trainingDetails.duration.toString(),
-              },
-            },
-            unit_amount: Math.round(finalPrice * 100),
-          },
-          quantity: 1,
-        },
-      ],
-      success_url: `${FRONTEND_URL}/success-training?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${FRONTEND_URL}/formations`,
-      payment_method_types: ["card"],
-      metadata: {
-        userId: userId.toString(),
-        trainingId: trainingId.toString(),
-        priceId: priceId,
-        originalPrice: (
-          trainingDetails.base_price || trainingDetails.price
-        ).toString(),
-        discountedPrice: finalPrice.toString(),
-        isMember: isMember.toString(),
-        type: "training_purchase",
-        trainingName: trainingDetails.full_name,
-        duration: trainingDetails.duration.toString(),
-      },
-      customer_creation: "always",
-      invoice_creation: {
-        enabled: true,
-        invoice_data: {
-          description: `Formation ${trainingDetails.full_name}`,
-          metadata: {
-            type: "training_purchase",
-            userId: userId.toString(),
-            trainingId: trainingId.toString(),
-          },
-        },
-      },
-    };
-
-    // Si on a un email, l'ajouter
-    if (userEmail) {
-      sessionConfig.customer_email = userEmail;
-    }
-
-    const session = await stripe.checkout.sessions.create(sessionConfig);
-
-    logWithTimestamp("info", "✅ Session Stripe formation créée avec succès", {
-      sessionId: session.id,
-      originalPrice: trainingDetails.base_price || trainingDetails.price,
-      finalPrice: finalPrice,
-      stripeAmount: Math.round(finalPrice * 100),
-      discount: isMember ? trainingDetails.member_discount || 0 : 0,
-      isMember,
-      customerCreation: "always",
-    });
-
-    res.status(200).json({
-      url: session.url,
-      training_details: {
-        name: trainingDetails.name,
-        full_name: trainingDetails.full_name,
-        original_price: trainingDetails.base_price || trainingDetails.price,
-        final_price: finalPrice,
-        discount: isMember ? trainingDetails.member_discount || 0 : 0,
-        is_member: isMember,
-      },
-    });
-  } catch (err) {
-    logWithTimestamp("error", "Erreur création session Stripe formation", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /check-training-purchase/:userId/:trainingId
- * Vérifie si un utilisateur a déjà acheté une formation
- */
-app.get("/check-training-purchase/:userId/:trainingId", async (req, res) => {
-  const { userId, trainingId } = req.params;
-
-  try {
-    const { data, error } = await supabase
-      .from("trainings_purchase")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("training_id", trainingId)
-      .single();
-
-    if (error && error.code !== "PGRST116") {
-      logWithTimestamp("error", "Erreur vérification achat formation", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({
-      purchased: !!data,
-      purchase_details: data || null,
-    });
-  } catch (error) {
-    logWithTimestamp("error", "Erreur vérification achat formation", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * POST /process-training-purchase
- * Traite le succès d'un paiement de formation
- */
-app.post("/process-training-purchase", async (req, res) => {
-  const { sessionId } = req.body;
-
-  logWithTimestamp("info", "=== TRAITEMENT SUCCÈS FORMATION ===");
-  logWithTimestamp("info", "Session ID reçu", sessionId);
-
-  try {
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-
-    logWithTimestamp("info", "Session Stripe récupérée", {
-      id: session.id,
-      payment_status: session.payment_status,
-      mode: session.mode,
-    });
-
-    if (session.payment_status === "paid") {
-      await createTrainingPurchase(session.metadata, session);
-      logWithTimestamp(
-        "info",
-        "Achat formation créé avec succès pour la session",
-        session.id
-      );
-      res.json({ success: true, message: "Formation achetée avec succès" });
-    } else {
-      logWithTimestamp("warn", "Paiement non confirmé", session.payment_status);
-      res.status(400).json({ error: "Paiement non confirmé" });
-    }
-  } catch (error) {
-    logWithTimestamp("error", "Erreur traitement succès formation", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * GET /training-details/:priceId/:userId
- * Récupère les détails d'une formation avec prix calculé
- */
-app.get("/training-details/:priceId/:userId", async (req, res) => {
-  const { priceId, userId } = req.params;
-
-  logWithTimestamp("info", "Récupération détails formation", {
-    priceId,
-    userId,
-  });
-
-  try {
-    const trainingDetails = getTrainingDetails(priceId);
-    if (!trainingDetails) {
-      return res.status(404).json({ error: "Formation non trouvée" });
-    }
-
-    const isMember = await checkIfUserIsMember(userId);
-    const finalPrice = calculateDiscountedPrice(trainingDetails, isMember);
-
-    res.json({
-      ...trainingDetails,
-      final_price: finalPrice,
-      discount: isMember ? trainingDetails.member_discount : 0,
-      is_member: isMember,
-    });
-  } catch (error) {
-    logWithTimestamp("error", "Erreur récupération détails formation", error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// Routes des formations (refactorisées)
+app.use("/", trainingRoutes);
 
 // ========================
 // WEBHOOKS STRIPE
@@ -479,6 +115,7 @@ app.post("/webhook", async (req, res) => {
               session.id
             );
 
+            // Utilisation du module refactorisé
             const result = await createTrainingPurchase(
               session.metadata,
               session
@@ -728,7 +365,7 @@ app.get("/health", (req, res) => {
   res.json({
     status: "OK",
     timestamp: new Date().toISOString(),
-    version: "2.2.0-emails-refactored",
+    version: "2.3.0-trainings-refactored",
     services: {
       email: {
         configured: !!process.env.RESEND_API_KEY,
@@ -752,13 +389,16 @@ app.get("/health", (req, res) => {
     },
     refactoring: {
       memberships: "✅ Refactorisé",
-      emails: "✅ REFACTORISÉ COMPLET", // ← Mise à jour
-      trainings: "⏳ En cours",
+      emails: "✅ Refactorisé",
+      trainings: "✅ REFACTORISÉ", // ← Nouveau !
       contact: "⏳ En cours",
       prevention: "⏳ En cours",
+      payments: "⏳ En cours",
+      health: "⏳ En cours",
     },
     modules: {
       emails: "✅ 9 fichiers modulaires",
+      trainings: "✅ 3 fichiers modulaires", // ← Nouveau !
       templates: "✅ Centralisés",
       validation: "✅ Centralisée",
       core: "✅ Avec retry logic",
@@ -822,17 +462,14 @@ async function startServer() {
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
       logWithTimestamp("info", `📧 Email: ${CONTACT_EMAIL}`);
+      logWithTimestamp("info", "✅ Backend Novapsy - TRAININGS REFACTORISÉS");
       logWithTimestamp(
         "info",
-        "✅ Backend Novapsy - EMAILS REFACTORISÉS COMPLETS"
+        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers)"
       );
       logWithTimestamp(
         "info",
-        "📁 Modules emails: 9 fichiers modulaires avec templates centralisés"
-      );
-      logWithTimestamp(
-        "info",
-        "🔧 Prochaines étapes: refactoriser trainings, contact, prevention"
+        "🔧 Prochaines étapes: refactoriser payments, health, contact, prevention"
       );
     });
   } catch (error) {
