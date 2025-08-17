@@ -16,27 +16,33 @@ async function checkIfUserIsMember(userId) {
   try {
     logWithTimestamp("info", "Vérification statut adhérent", { userId });
 
-    const { data, error } = await supabase
+    // Status ID qui correspondent à un membre : 2, 3, ou 4
+    const memberStatusIds = [2, 3, 4];
+
+    const { data: userStatuses, error } = await supabase
       .from("users_status")
       .select("status_id")
       .eq("user_id", userId)
-      .in("status_id", [2, 3, 4]) // IDs des statuts adhérents
-      .maybeSingle();
+      .in("status_id", memberStatusIds); // Filtre seulement les status de membre
 
     if (error) {
       logWithTimestamp("error", "Erreur vérification statut adhérent", error);
       return false;
     }
 
-    const isMember = !!data;
-    logWithTimestamp("info", "Résultat vérification adhérent", {
+    // Si l'utilisateur a au moins un status de membre (2, 3, ou 4)
+    const isActiveMember = userStatuses && userStatuses.length > 0;
+
+    logWithTimestamp("info", "👤 Statut adhérent vérifié", {
       userId,
-      isMember,
-      statusId: data?.status_id,
+      isMember: isActiveMember,
+      memberStatusesFound: userStatuses?.map((s) => s.status_id) || [],
+      allMemberStatuses: memberStatusIds,
     });
-    return isMember;
+
+    return isActiveMember;
   } catch (error) {
-    logWithTimestamp("error", "Erreur vérification adhérent", error);
+    logWithTimestamp("error", "Exception vérification statut adhérent", error);
     return false;
   }
 }

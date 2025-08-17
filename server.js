@@ -916,6 +916,8 @@ function generatePreventionRequestEmailHTML(requestData) {
  * Crée une session de paiement pour une formation avec réduction adhérent
  * Body: { priceId, userId, trainingId }
  */
+// Ajoutez ces logs dans votre route /create-training-checkout après les variables existantes
+
 app.post("/create-training-checkout", async (req, res) => {
   const { priceId, userId, trainingId } = req.body;
 
@@ -929,12 +931,25 @@ app.post("/create-training-checkout", async (req, res) => {
 
   try {
     const trainingDetails = getTrainingDetails(priceId);
+    logWithTimestamp("info", "🎓 Training details récupérés", trainingDetails);
+
     if (!trainingDetails) {
       return res.status(400).json({ error: "Formation non trouvée" });
     }
 
     const isMember = await checkIfUserIsMember(userId);
+    logWithTimestamp("info", "👤 Statut adhérent vérifié", {
+      userId,
+      isMember,
+    });
+
     const finalPrice = calculateDiscountedPrice(trainingDetails, isMember);
+    logWithTimestamp("info", "💰 Prix calculé", {
+      originalPrice: trainingDetails.base_price || trainingDetails.price,
+      isMember,
+      finalPrice,
+      memberDiscount: trainingDetails.member_discount || 0,
+    });
 
     // Récupérer l'email de l'utilisateur
     const userEmail = await getMailByUser(userId);
@@ -953,7 +968,7 @@ app.post("/create-training-checkout", async (req, res) => {
                 duration: trainingDetails.duration.toString(),
               },
             },
-            unit_amount: Math.round(finalPrice * 100),
+            unit_amount: Math.round(finalPrice * 100), // VÉRIFIEZ QUE finalPrice EST CORRECT
           },
           quantity: 1,
         },
@@ -965,14 +980,15 @@ app.post("/create-training-checkout", async (req, res) => {
         userId: userId.toString(),
         trainingId: trainingId.toString(),
         priceId: priceId,
-        originalPrice: trainingDetails.base_price.toString(),
+        originalPrice: (
+          trainingDetails.base_price || trainingDetails.price
+        ).toString(),
         discountedPrice: finalPrice.toString(),
         isMember: isMember.toString(),
         type: "training_purchase",
         trainingName: trainingDetails.full_name,
         duration: trainingDetails.duration.toString(),
       },
-      // IMPORTANT: Ajouter ces options pour créer automatiquement un customer
       customer_creation: "always",
       invoice_creation: {
         enabled: true,
@@ -994,11 +1010,12 @@ app.post("/create-training-checkout", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create(sessionConfig);
 
-    logWithTimestamp("info", "Session Stripe formation créée avec succès", {
+    logWithTimestamp("info", "✅ Session Stripe formation créée avec succès", {
       sessionId: session.id,
-      originalPrice: trainingDetails.base_price,
+      originalPrice: trainingDetails.base_price || trainingDetails.price,
       finalPrice: finalPrice,
-      discount: isMember ? trainingDetails.member_discount : 0,
+      stripeAmount: Math.round(finalPrice * 100), // MONTANT ENVOYÉ À STRIPE
+      discount: isMember ? trainingDetails.member_discount || 0 : 0,
       isMember,
       customerCreation: "always",
     });
@@ -1008,9 +1025,9 @@ app.post("/create-training-checkout", async (req, res) => {
       training_details: {
         name: trainingDetails.name,
         full_name: trainingDetails.full_name,
-        original_price: trainingDetails.base_price,
+        original_price: trainingDetails.base_price || trainingDetails.price,
         final_price: finalPrice,
-        discount: isMember ? trainingDetails.member_discount : 0,
+        discount: isMember ? trainingDetails.member_discount || 0 : 0,
         is_member: isMember,
       },
     });
