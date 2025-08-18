@@ -38,6 +38,9 @@ const { createTrainingPurchase, trainingRoutes } = require("./trainings");
 // Health module imports
 const { healthRoutes } = require("./health");
 
+// Contact module imports
+const { contactRoutes } = require("./contact");
+
 const app = express();
 
 // ========================
@@ -62,6 +65,9 @@ app.use("/", trainingRoutes);
 
 // Routes de santé (refactorisées)
 app.use("/", healthRoutes);
+
+// Routes de contact (refactorisées)
+app.use("/", contactRoutes);
 
 // ========================
 // WEBHOOKS STRIPE
@@ -187,38 +193,8 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ========================
-// ROUTES EMAIL REFACTORISÉES
+// ROUTES PREVENTION (NON REFACTORISÉES)
 // ========================
-
-/**
- * POST /contact
- * Traite le formulaire de contact via module refactorisé
- */
-app.post("/contact", async (req, res) => {
-  logWithTimestamp("info", "🔥 === NOUVEAU MESSAGE DE CONTACT ===");
-
-  try {
-    const result = await sendContactEmail(req.body);
-
-    if (result.success) {
-      return res.status(200).json(result);
-    } else {
-      return res.status(result.errors ? 400 : 500).json(result);
-    }
-  } catch (error) {
-    logWithTimestamp("error", "💥 EXCEPTION CRITIQUE dans route contact", {
-      error: error.message,
-      stack: error.stack,
-    });
-
-    return res.status(500).json({
-      success: false,
-      error: "Erreur serveur critique",
-      message:
-        "Veuillez réessayer ou nous contacter directement à contact@novapsy.info",
-    });
-  }
-});
 
 /**
  * POST /api/send-prevention-request
@@ -279,59 +255,9 @@ app.post("/api/test-prevention-request", async (req, res) => {
   }
 });
 
-/**
- * GET /contact/test
- * Test de la configuration email via module refactorisé
- */
-app.get("/contact/test", async (req, res) => {
-  logWithTimestamp("info", "🧪 === TEST CONFIGURATION EMAIL ===");
-
-  try {
-    const testHTML = `
-      <div style="padding: 30px; font-family: Arial, sans-serif;">
-        <h2 style="color: #10b981;">🧪 Test de Configuration Email</h2>
-        <p>✅ La configuration Resend fonctionne correctement</p>
-        <p><strong>Date :</strong> ${new Date().toLocaleString("fr-FR")}</p>
-        <p><strong>To :</strong> ${CONTACT_EMAIL}</p>
-        <p><strong>Module :</strong> emailCore.sendEmailWithRetry()</p>
-      </div>
-    `;
-
-    const result = await sendEmailWithRetry(
-      CONTACT_EMAIL,
-      "🧪 Test Configuration Resend - Novapsy (Refactorisé)",
-      testHTML
-    );
-
-    if (result.success) {
-      logWithTimestamp("info", "✅ Test email envoyé avec succès");
-      return res.json({
-        success: true,
-        message: "Configuration email fonctionnelle (modules refactorisés)",
-        details: {
-          messageId: result.messageId,
-          to: CONTACT_EMAIL,
-          attempt: result.attempt,
-          module: "emails/emailCore.js",
-        },
-      });
-    } else {
-      logWithTimestamp("error", "❌ Test email échoué", result.error);
-      return res.status(500).json({
-        success: false,
-        error: "Configuration email défaillante",
-        details: result.error,
-      });
-    }
-  } catch (error) {
-    logWithTimestamp("error", "💥 Exception test email", error);
-    return res.status(500).json({
-      success: false,
-      error: "Erreur lors du test",
-      message: error.message,
-    });
-  }
-});
+// ========================
+// ROUTES NEWSLETTER (NON REFACTORISÉES)
+// ========================
 
 /**
  * POST /send-newsletter
@@ -419,14 +345,14 @@ async function startServer() {
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
       logWithTimestamp("info", `📧 Email: ${CONTACT_EMAIL}`);
-      logWithTimestamp("info", "✅ Backend Novapsy - HEALTH REFACTORISÉ");
+      logWithTimestamp("info", "✅ Backend Novapsy - CONTACT REFACTORISÉ");
       logWithTimestamp(
         "info",
-        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers) + health (3 fichiers)"
+        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers) + health (3 fichiers) + contact (3 fichiers)"
       );
       logWithTimestamp(
         "info",
-        "🔧 Prochaines étapes: refactoriser contact, prevention, payments"
+        "🔧 Prochaines étapes: refactoriser prevention, payments"
       );
     });
   } catch (error) {
