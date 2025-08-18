@@ -41,6 +41,9 @@ const { healthRoutes } = require("./health");
 // Contact module imports
 const { contactRoutes } = require("./contact");
 
+// Prevention module imports
+const { preventionRoutes } = require("./prevention");
+
 const app = express();
 
 // ========================
@@ -68,6 +71,9 @@ app.use("/", healthRoutes);
 
 // Routes de contact (refactorisées)
 app.use("/", contactRoutes);
+
+// Routes de prévention (refactorisées)
+app.use("/", preventionRoutes);
 
 // ========================
 // WEBHOOKS STRIPE
@@ -193,69 +199,6 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ========================
-// ROUTES PREVENTION (NON REFACTORISÉES)
-// ========================
-
-/**
- * POST /api/send-prevention-request
- * Traite une demande de prévention via module refactorisé
- */
-app.post("/api/send-prevention-request", async (req, res) => {
-  logWithTimestamp("info", "🎯 === NOUVELLE DEMANDE DE PRÉVENTION ===");
-
-  const { to, subject, requestData } = req.body;
-
-  try {
-    const result = await sendPreventionRequest(requestData, to, subject);
-
-    if (result.success) {
-      return res.status(200).json(result);
-    } else {
-      return res.status(result.errors ? 400 : 500).json(result);
-    }
-  } catch (error) {
-    logWithTimestamp("error", "💥 EXCEPTION CRITIQUE dans route prévention", {
-      error: error.message,
-      stack: error.stack,
-    });
-
-    return res.status(500).json({
-      success: false,
-      error: "Erreur serveur critique",
-      message:
-        "Veuillez réessayer ou nous contacter directement à contact@novapsy.info",
-    });
-  }
-});
-
-/**
- * POST /api/test-prevention-request
- * Test des demandes de prévention via module refactorisé
- */
-app.post("/api/test-prevention-request", async (req, res) => {
-  logWithTimestamp("info", "🧪 === TEST DEMANDE PRÉVENTION ===");
-
-  const { theme } = req.body;
-
-  try {
-    const result = await testPreventionRequest(theme);
-
-    if (result.success) {
-      return res.status(200).json(result);
-    } else {
-      return res.status(500).json(result);
-    }
-  } catch (error) {
-    logWithTimestamp("error", "💥 Exception test demande prévention", error);
-    return res.status(500).json({
-      success: false,
-      error: "Erreur lors du test",
-      message: error.message,
-    });
-  }
-});
-
-// ========================
 // ROUTES NEWSLETTER (NON REFACTORISÉES)
 // ========================
 
@@ -345,15 +288,12 @@ async function startServer() {
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
       logWithTimestamp("info", `📧 Email: ${CONTACT_EMAIL}`);
-      logWithTimestamp("info", "✅ Backend Novapsy - CONTACT REFACTORISÉ");
+      logWithTimestamp("info", "✅ Backend Novapsy - PREVENTION REFACTORISÉ");
       logWithTimestamp(
         "info",
-        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers) + health (3 fichiers) + contact (3 fichiers)"
+        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers) + health (3 fichiers) + contact (3 fichiers) + prevention (3 fichiers)"
       );
-      logWithTimestamp(
-        "info",
-        "🔧 Prochaines étapes: refactoriser prevention, payments"
-      );
+      logWithTimestamp("info", "🔧 Prochaines étapes: refactoriser payments");
     });
   } catch (error) {
     logWithTimestamp("error", "💥 Erreur critique au démarrage", error);
