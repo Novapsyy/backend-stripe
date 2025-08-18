@@ -35,6 +35,9 @@ const {
 // Training modules imports
 const { createTrainingPurchase, trainingRoutes } = require("./trainings");
 
+// Health module imports
+const { healthRoutes } = require("./health");
+
 const app = express();
 
 // ========================
@@ -56,6 +59,9 @@ app.use("/", membershipRoutes);
 
 // Routes des formations (refactorisées)
 app.use("/", trainingRoutes);
+
+// Routes de santé (refactorisées)
+app.use("/", healthRoutes);
 
 // ========================
 // WEBHOOKS STRIPE
@@ -354,57 +360,8 @@ app.post("/send-newsletter", async (req, res) => {
 });
 
 // ========================
-// ROUTES DE SANTÉ ET DEBUG
+// ROUTES DE DEBUG
 // ========================
-
-/**
- * GET /health
- * Endpoint de santé du serveur
- */
-app.get("/health", (req, res) => {
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    version: "2.3.0-trainings-refactored",
-    services: {
-      email: {
-        configured: !!process.env.RESEND_API_KEY,
-        to: CONTACT_EMAIL,
-      },
-      stripe: {
-        configured: !!process.env.STRIPE_SECRET_KEY,
-      },
-      supabase: {
-        configured: !!process.env.SUPABASE_URL,
-      },
-    },
-    features: {
-      contact_form: true,
-      email_retry: true,
-      email_confirmation: true,
-      prevention_requests: true,
-      membership_management: true,
-      training_purchases: true,
-      newsletter: true,
-    },
-    refactoring: {
-      memberships: "✅ Refactorisé",
-      emails: "✅ Refactorisé",
-      trainings: "✅ REFACTORISÉ", // ← Nouveau !
-      contact: "⏳ En cours",
-      prevention: "⏳ En cours",
-      payments: "⏳ En cours",
-      health: "⏳ En cours",
-    },
-    modules: {
-      emails: "✅ 9 fichiers modulaires",
-      trainings: "✅ 3 fichiers modulaires", // ← Nouveau !
-      templates: "✅ Centralisés",
-      validation: "✅ Centralisée",
-      core: "✅ Avec retry logic",
-    },
-  });
-});
 
 /**
  * GET /user-email/:userId
@@ -462,14 +419,14 @@ async function startServer() {
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
       logWithTimestamp("info", `📧 Email: ${CONTACT_EMAIL}`);
-      logWithTimestamp("info", "✅ Backend Novapsy - TRAININGS REFACTORISÉS");
+      logWithTimestamp("info", "✅ Backend Novapsy - HEALTH REFACTORISÉ");
       logWithTimestamp(
         "info",
-        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers)"
+        "📁 Modules refactorisés: emails (9 fichiers) + trainings (3 fichiers) + health (3 fichiers)"
       );
       logWithTimestamp(
         "info",
-        "🔧 Prochaines étapes: refactoriser payments, health, contact, prevention"
+        "🔧 Prochaines étapes: refactoriser contact, prevention, payments"
       );
     });
   } catch (error) {
