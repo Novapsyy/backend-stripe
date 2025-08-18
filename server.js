@@ -20,13 +20,17 @@ const { trainingRoutes } = require("./trainings");
 const { healthRoutes } = require("./health");
 const { contactRoutes } = require("./contact");
 const { preventionRoutes } = require("./prevention");
-const { paymentRoutes } = require("./payments"); // ✅ NOUVEAU MODULE PAYMENTS
+const { paymentRoutes } = require("./payments");
 
 // Email modules imports
 const { sendNewsletter } = require("./emails");
 
 const app = express();
 
+const { specs, swaggerUi } = require("./config/swagger");
+
+// Swagger documentation
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 // ========================
 // MIDDLEWARES
 // ========================
