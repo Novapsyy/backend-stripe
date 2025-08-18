@@ -269,6 +269,7 @@ function generatePreventionRequestEmailHTML(requestData) {
     message,
     category,
     timestamp,
+    userEmail,
   } = requestData;
 
   // Obtenir les couleurs du thème
@@ -428,12 +429,19 @@ function generatePreventionRequestEmailHTML(requestData) {
             </div>
           </div>
 
-          <!-- Contact Info -->
-          <div style="background-color: #f0fff4; border: 1px solid #9ae6b4; border-radius: 8px; padding: 20px; text-align: center;">
-            <p style="margin: 0; color: #2f855a; font-size: 14px;">
-              <strong>💡 Action recommandée :</strong> Contacter le demandeur pour finaliser les modalités de la formation
-            </p>
+          ${
+            userEmail
+              ? `
+          <!-- Contact User Button -->
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="mailto:${userEmail}?subject=Réponse à votre demande de prévention - ${category.nom}&body=Bonjour,%0D%0A%0D%0ANous avons bien reçu votre demande de prévention concernant "${category.nom}".%0D%0A%0D%0ANous vous recontactons pour finaliser les modalités de votre formation.%0D%0A%0D%0ACordialement,%0D%0AL'équipe Novapsy" 
+               style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 15px 30px; border-radius: 8px; font-weight: 600; font-size: 16px; text-decoration: none; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+              📧 Contacter l'utilisateur.rice
+            </a>
           </div>
+          `
+              : ""
+          }
 
         </div>
 

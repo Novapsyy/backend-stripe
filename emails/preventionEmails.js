@@ -25,6 +25,7 @@ async function sendPreventionRequest(requestData, to = null, subject = null) {
     category,
     timestamp,
     source,
+    userEmail,
   } = requestData || {};
 
   logWithTimestamp("info", "📋 Données de demande reçues", {
@@ -36,6 +37,7 @@ async function sendPreventionRequest(requestData, to = null, subject = null) {
     hasForme: !!formeEnvisagee,
     hasMessage: !!message,
     source: source || "unknown",
+    userEmail: userEmail || "Non fourni",
   });
 
   // Validation des données
@@ -69,6 +71,7 @@ async function sendPreventionRequest(requestData, to = null, subject = null) {
       category,
       timestamp: timestamp || new Date().toISOString(),
       source: source || "prevention_catalog",
+      userEmail: userEmail || null,
     };
 
     // Générer le sujet de l'email

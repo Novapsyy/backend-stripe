@@ -188,7 +188,7 @@ function enrichRequestData(requestData) {
     enriched.thematiquesEnvisagees = "Aucune thématique spécifique";
   }
   if (!enriched.formeEnvisagee) {
-    enriched.formeEnvisagee = "Format à définir";
+    enriched.formeEnvisagee = "Aucune forme envisagée";
   }
   if (!enriched.message) {
     enriched.message = "Aucun message complémentaire";
