@@ -7,23 +7,21 @@ const { CONTACT_EMAIL } = require("./config/email");
 
 // Shared utilities imports
 const { logWithTimestamp } = require("./shared/logger");
-const { getMailByUser } = require("./shared/userUtils");
 const {
   corsMiddleware,
   errorHandler,
   notFoundHandler,
 } = require("./shared/middleware");
 
-// Business logic imports - MODULES REFACTORISÉS
+// Business logic imports - TOUS LES MODULES REFACTORISÉS ✅
 const membershipRoutes = require("./memberships/membershipRoutes");
 const { trainingRoutes } = require("./trainings");
 const { healthRoutes } = require("./health");
 const { contactRoutes } = require("./contact");
 const { preventionRoutes } = require("./prevention");
 const { paymentRoutes } = require("./payments");
-
-// Email modules imports
-const { sendNewsletter } = require("./emails");
+const { newsletterRoutes } = require("./newsletter");
+const { debugRoutes } = require("./debug");
 
 const app = express();
 
@@ -31,6 +29,7 @@ const { specs, swaggerUi } = require("./config/swagger");
 
 // Swagger documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
+
 // ========================
 // MIDDLEWARES
 // ========================
@@ -43,79 +42,32 @@ app.use(express.json());
 app.use(corsMiddleware);
 
 // ========================
-// ROUTES MODULAIRES - TOUS REFACTORISÉS
+// ROUTES MODULAIRES - 🎯 REFACTORING 100% TERMINÉ ! 🎯
 // ========================
 
-// Routes des adhésions (refactorisées)
+// Routes des adhésions ✅
 app.use("/", membershipRoutes);
 
-// Routes des formations (refactorisées)
+// Routes des formations ✅
 app.use("/", trainingRoutes);
 
-// Routes de santé (refactorisées)
+// Routes de santé ✅
 app.use("/", healthRoutes);
 
-// Routes de contact (refactorisées)
+// Routes de contact ✅
 app.use("/", contactRoutes);
 
-// Routes de prévention (refactorisées)
+// Routes de prévention ✅
 app.use("/", preventionRoutes);
 
-// ✅ Routes de paiement (NOUVEAU - refactorisées)
+// Routes de paiement ✅
 app.use("/", paymentRoutes);
 
-// ========================
-// ROUTES NON REFACTORISÉES (À TRAITER PLUS TARD)
-// ========================
+// 🆕 Routes de newsletter ✅ (NOUVEAU - refactorisées)
+app.use("/", newsletterRoutes);
 
-/**
- * POST /send-newsletter
- * Envoie une newsletter via module refactorisé
- * TODO: À refactoriser dans un module newsletter
- */
-app.post("/send-newsletter", async (req, res) => {
-  logWithTimestamp("info", "=== ENVOI NEWSLETTER (REFACTORISÉ) ===");
-
-  const { subject, html } = req.body;
-
-  try {
-    const result = await sendNewsletter(subject, html);
-
-    if (result.success) {
-      return res.status(200).json(result);
-    } else {
-      return res.status(500).json(result);
-    }
-  } catch (error) {
-    logWithTimestamp("error", "Erreur envoi newsletter", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-/**
- * GET /user-email/:userId
- * Récupère l'email d'un utilisateur (pour debug)
- * TODO: À refactoriser dans un module debug/utils
- */
-app.get("/user-email/:userId", async (req, res) => {
-  const { userId } = req.params;
-
-  try {
-    const email = await getMailByUser(userId);
-
-    if (email) {
-      res.json({ email });
-    } else {
-      res.status(404).json({ error: "Email utilisateur non trouvé" });
-    }
-  } catch (error) {
-    logWithTimestamp("error", "Erreur récupération email utilisateur", error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// 🆕 Routes de debug/utils ✅ (NOUVEAU - refactorisées)
+app.use("/", debugRoutes);
 
 // ========================
 // GESTION D'ERREURS
@@ -151,17 +103,20 @@ async function startServer() {
       );
       logWithTimestamp("info", `📊 Frontend: ${FRONTEND_URL}`);
       logWithTimestamp("info", `📧 Email: ${CONTACT_EMAIL}`);
-      logWithTimestamp("info", "✅ Backend Novapsy - REFACTORING COMPLET !");
       logWithTimestamp(
         "info",
-        "📁 Modules refactorisés: emails (9) + trainings (3) + health (3) + contact (3) + prevention (3) + payments (3) = 24 fichiers"
+        "🎉 Backend Novapsy - REFACTORING 100% TERMINÉ ! 🎉"
       );
-      logWithTimestamp("info", "🎯 Architecture modulaire: 100% TERMINÉE");
       logWithTimestamp(
         "info",
-        "🔧 Prochaines étapes: newsletter + debug/utils"
+        "📁 Modules refactorisés: emails (9) + trainings (3) + health (3) + contact (3) + prevention (3) + payments (3) + newsletter (3) + debug (3) = 30 fichiers"
       );
-      logWithTimestamp("info", "🚀 SERVEUR PRÊT POUR PRODUCTION");
+      logWithTimestamp("info", "🏗️ Architecture modulaire: PARFAITE !");
+      logWithTimestamp(
+        "info",
+        "✨ Tous les endpoints sont maintenant modulaires"
+      );
+      logWithTimestamp("info", "🚀 SERVEUR 100% PRODUCTION-READY ! 🚀");
     });
   } catch (error) {
     logWithTimestamp("error", "💥 Erreur critique au démarrage", error);
