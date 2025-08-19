@@ -178,7 +178,7 @@ router.post("/create-checkout-session", async (req, res) => {
     const sessionConfig = {
       mode: "payment",
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: successUrl || defaultSuccessUrl,
+        statusId: statusId.toString(),
       cancel_url: cancelUrl || defaultCancelUrl,
       payment_method_types: ["card"],
       metadata: {
