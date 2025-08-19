@@ -178,7 +178,7 @@ router.post("/create-checkout-session", async (req, res) => {
     const sessionConfig = {
       mode: "payment",
       line_items: [{ price: priceId, quantity: 1 }],
-        statusId: statusId.toString(),
+      success_url: successUrl || defaultSuccessUrl,
       cancel_url: cancelUrl || defaultCancelUrl,
       payment_method_types: ["card"],
       metadata: {
@@ -186,7 +186,7 @@ router.post("/create-checkout-session", async (req, res) => {
         associationId: associationId || "",
         userType: userType,
         priceId: priceId,
-        statusId: statusId.toString(),
+        statusId: statusId ? String(statusId) : "",
         type: "membership_onetime",
       },
       // IMPORTANT: Ajouter ces options pour créer automatiquement un customer
