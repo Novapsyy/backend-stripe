@@ -6,6 +6,7 @@ const { stripe } = require("../config/stripe");
 const { FRONTEND_URL } = require("../config/constants");
 const { logWithTimestamp } = require("../shared/logger");
 const { getMailByUser } = require("../shared/userUtils");
+const { validateRequest, validationSchemas } = require("../shared/validation");
 const {
   createMembership,
   getInvoiceFromPayment,
@@ -19,6 +20,7 @@ const {
  */
 router.post(
   "/create-payment-attestation/:paymentIntentId",
+  validateRequest(validationSchemas.paymentIntentId),
   async (req, res) => {
     const { paymentIntentId } = req.params;
 
@@ -129,40 +131,30 @@ router.post(
  * Crée une session de paiement Stripe pour un forfait d'adhésion d'un an
  * Body: { priceId, userId, associationId, userType, statusId, successUrl?, cancelUrl? }
  */
-router.post("/create-checkout-session", async (req, res) => {
-  const {
-    priceId,
-    userId,
-    associationId,
-    userType,
-    statusId,
-    successUrl,
-    cancelUrl,
-  } = req.body;
+router.post(
+  "/create-checkout-session",
+  validateRequest(validationSchemas.membershipCheckout),
+  async (req, res) => {
+    const {
+      priceId,
+      userId,
+      associationId,
+      userType,
+      statusId,
+      successUrl,
+      cancelUrl,
+    } = req.body;
 
-  logWithTimestamp("info", "=== CRÉATION SESSION FORFAIT ADHÉSION ===");
-  logWithTimestamp("info", "Données reçues", {
-    priceId,
-    userId,
-    associationId,
-    userType,
-    statusId,
-    successUrl,
-    cancelUrl,
-  });
-
-  // Validation des paramètres
-  if (!priceId) return res.status(400).json({ error: "priceId manquant" });
-  if (!statusId) return res.status(400).json({ error: "statusId manquant" });
-  if (
-    !userType ||
-    (userType === "user" && !userId) ||
-    (userType === "association" && !associationId)
-  ) {
-    return res
-      .status(400)
-      .json({ error: "Informations utilisateur manquantes" });
-  }
+    logWithTimestamp("info", "=== CRÉATION SESSION FORFAIT ADHÉSION ===");
+    logWithTimestamp("info", "Données reçues", {
+      priceId,
+      userId,
+      associationId,
+      userType,
+      statusId,
+      successUrl,
+      cancelUrl,
+    });
 
   try {
     // Récupérer l'email de l'utilisateur pour créer un customer
@@ -238,7 +230,10 @@ router.post("/create-checkout-session", async (req, res) => {
  * Traite le succès d'un paiement de forfait d'adhésion
  * Body: { sessionId }
  */
-router.post("/process-payment-success", async (req, res) => {
+router.post(
+  "/process-payment-success",
+  validateRequest(validationSchemas.paymentSuccess),
+  async (req, res) => {
   const { sessionId } = req.body;
 
   logWithTimestamp("info", "=== TRAITEMENT SUCCÈS PAIEMENT FORFAIT ===");
@@ -271,7 +266,10 @@ router.post("/process-payment-success", async (req, res) => {
  * Récupère l'historique des adhésions d'un utilisateur ou d'une association
  * Params: userId (UUID), userType ("user" | "association")
  */
-router.get("/membership-status/:userId/:userType", async (req, res) => {
+router.get(
+  "/membership-status/:userId/:userType",
+  validateRequest(validationSchemas.membershipStatus),
+  async (req, res) => {
   const { userId, userType } = req.params;
 
   try {
@@ -339,7 +337,10 @@ router.get("/membership-status/:userId/:userType", async (req, res) => {
  * Récupère le reçu PDF d'une adhésion (facture Stripe ou payment_intent)
  * Params: invoiceId (ID de la facture Stripe ou payment_intent)
  */
-router.get("/receipt/:invoiceId", async (req, res) => {
+router.get(
+  "/receipt/:invoiceId",
+  validateRequest(validationSchemas.invoiceId),
+  async (req, res) => {
   const { invoiceId } = req.params;
 
   logWithTimestamp("info", "Récupération reçu", invoiceId);

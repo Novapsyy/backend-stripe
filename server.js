@@ -8,6 +8,7 @@ const { CONTACT_EMAIL } = require("./config/email");
 // Shared utilities imports
 const { logWithTimestamp } = require("./shared/logger");
 const { getMailByUser } = require("./shared/userUtils");
+const { validateRequest, validationSchemas } = require("./shared/validation");
 const {
   corsMiddleware,
   errorHandler,
@@ -29,9 +30,14 @@ const app = express();
 
 const { specs, swaggerUi } = require("./config/swagger");
 
-// Swagger documentation
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
-// ========================
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(specs, {
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "Novapsy API Documentation",
+  })
+); // ========================
 // MIDDLEWARES
 // ========================
 
@@ -73,7 +79,10 @@ app.use("/", paymentRoutes);
  * Envoie une newsletter via module refactorisé
  * TODO: À refactoriser dans un module newsletter
  */
-app.post("/send-newsletter", async (req, res) => {
+app.post(
+  "/send-newsletter",
+  validateRequest(validationSchemas.newsletter),
+  async (req, res) => {
   logWithTimestamp("info", "=== ENVOI NEWSLETTER (REFACTORISÉ) ===");
 
   const { subject, html } = req.body;
@@ -100,7 +109,10 @@ app.post("/send-newsletter", async (req, res) => {
  * Récupère l'email d'un utilisateur (pour debug)
  * TODO: À refactoriser dans un module debug/utils
  */
-app.get("/user-email/:userId", async (req, res) => {
+app.get(
+  "/user-email/:userId",
+  validateRequest(validationSchemas.userId),
+  async (req, res) => {
   const { userId } = req.params;
 
   try {
