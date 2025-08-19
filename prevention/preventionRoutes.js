@@ -5,19 +5,20 @@ const {
   getPreventionStats,
 } = require("./preventionService");
 const { logWithTimestamp } = require("../shared/logger");
-const { validateRequest, validationSchemas } = require("../shared/validation");
 const router = express.Router();
 
 /**
  * POST /api/send-prevention-request
  */
-router.post(
-  "/api/send-prevention-request",
-  validateRequest(validationSchemas.preventionRequest),
-  async (req, res) => {
-    logWithTimestamp("info", "📥 Nouvelle demande de prévention");
-    try {
-      const { to, subject, requestData } = req.body;
+router.post("/api/send-prevention-request", async (req, res) => {
+  logWithTimestamp("info", "📥 Nouvelle demande de prévention");
+  try {
+    const { to, subject, requestData } = req.body;
+    if (!to || !subject || !requestData) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Données manquantes" });
+    }
     const result = await processPreventionRequest(requestData, to, subject);
     const statusCode = result.errors ? 400 : result.success ? 200 : 500;
     return res.status(statusCode).json(result);
@@ -32,13 +33,13 @@ router.post(
 /**
  * POST /api/test-prevention-request
  */
-router.post(
-  "/api/test-prevention-request",
-  validateRequest(validationSchemas.preventionTest),
-  async (req, res) => {
-    logWithTimestamp("info", "🧪 Test demande de prévention");
-    try {
-      const { theme } = req.body;
+router.post("/api/test-prevention-request", async (req, res) => {
+  logWithTimestamp("info", "🧪 Test demande de prévention");
+  try {
+    const { theme } = req.body;
+    if (!theme) {
+      return res.status(400).json({ success: false, error: "Thème manquant" });
+    }
     const result = await testPreventionRequest(theme);
     const statusCode = result.errors ? 400 : result.success ? 200 : 500;
     return res.status(statusCode).json(result);

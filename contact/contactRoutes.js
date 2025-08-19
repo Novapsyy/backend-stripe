@@ -7,7 +7,6 @@ const {
   testEmailConfiguration,
 } = require("./contactService");
 const { logWithTimestamp } = require("../shared/logger");
-const { validateRequest, validationSchemas } = require("../shared/validation");
 
 const router = express.Router();
 
@@ -15,10 +14,7 @@ const router = express.Router();
  * POST /contact
  * Traite le formulaire de contact via module refactorisé
  */
-router.post(
-  "/contact",
-  validateRequest(validationSchemas.contactForm),
-  async (req, res) => {
+router.post("/contact", async (req, res) => {
   logWithTimestamp("info", "📬 === NOUVELLE DEMANDE DE CONTACT ===");
 
   try {

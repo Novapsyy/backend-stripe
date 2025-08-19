@@ -3,7 +3,6 @@ const { stripe } = require("../config/stripe");
 const { FRONTEND_URL } = require("../config/constants");
 const { logWithTimestamp } = require("../shared/logger");
 const { getMailByUser } = require("../shared/userUtils");
-const { validateRequest, validationSchemas } = require("../shared/validation");
 const {
   getTrainingDetails,
   calculateDiscountedPrice,
@@ -22,14 +21,17 @@ const router = express.Router();
  * Crée une session de paiement pour une formation avec réduction adhérent
  * Body: { priceId, userId, trainingId }
  */
-router.post(
-  "/create-training-checkout",
-  validateRequest(validationSchemas.trainingCheckout),
-  async (req, res) => {
-    const { priceId, userId, trainingId } = req.body;
+router.post("/create-training-checkout", async (req, res) => {
+  const { priceId, userId, trainingId } = req.body;
 
-    logWithTimestamp("info", "=== CRÉATION SESSION FORMATION ===");
-    logWithTimestamp("info", "Données reçues", { priceId, userId, trainingId });
+  logWithTimestamp("info", "=== CRÉATION SESSION FORMATION ===");
+  logWithTimestamp("info", "Données reçues", { priceId, userId, trainingId });
+
+  // Validation des paramètres requis
+  if (!priceId) return res.status(400).json({ error: "priceId manquant" });
+  if (!userId) return res.status(400).json({ error: "userId manquant" });
+  if (!trainingId)
+    return res.status(400).json({ error: "trainingId manquant" });
 
   try {
     const trainingDetails = getTrainingDetails(priceId);
@@ -143,10 +145,7 @@ router.post(
  * GET /check-training-purchase/:userId/:trainingId
  * Vérifie si un utilisateur a déjà acheté une formation
  */
-router.get(
-  "/check-training-purchase/:userId/:trainingId",
-  validateRequest(validationSchemas.trainingPurchaseCheck),
-  async (req, res) => {
+router.get("/check-training-purchase/:userId/:trainingId", async (req, res) => {
   const { userId, trainingId } = req.params;
 
   logWithTimestamp("info", "Vérification achat formation", {
@@ -171,14 +170,15 @@ router.get(
  * POST /process-training-purchase
  * Traite le succès d'un paiement de formation
  */
-router.post(
-  "/process-training-purchase",
-  validateRequest(validationSchemas.paymentSuccess),
-  async (req, res) => {
-    const { sessionId } = req.body;
+router.post("/process-training-purchase", async (req, res) => {
+  const { sessionId } = req.body;
 
-    logWithTimestamp("info", "=== TRAITEMENT SUCCÈS FORMATION ===");
-    logWithTimestamp("info", "Session ID reçu", sessionId);
+  logWithTimestamp("info", "=== TRAITEMENT SUCCÈS FORMATION ===");
+  logWithTimestamp("info", "Session ID reçu", sessionId);
+
+  if (!sessionId) {
+    return res.status(400).json({ error: "sessionId manquant" });
+  }
 
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
@@ -214,10 +214,7 @@ router.post(
  * GET /training-details/:priceId/:userId
  * Récupère les détails d'une formation avec prix calculé
  */
-router.get(
-  "/training-details/:priceId/:userId",
-  validateRequest(validationSchemas.trainingDetails),
-  async (req, res) => {
+router.get("/training-details/:priceId/:userId", async (req, res) => {
   const { priceId, userId } = req.params;
 
   logWithTimestamp("info", "Récupération détails formation", {

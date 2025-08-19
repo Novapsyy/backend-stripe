@@ -3,7 +3,6 @@ const router = express.Router();
 
 const { stripe } = require("../config/stripe");
 const { logWithTimestamp } = require("../shared/logger");
-const { validateRequest, validationSchemas } = require("../shared/validation");
 const {
   createCheckoutSession,
   handleWebhook,
@@ -56,28 +55,31 @@ router.post(
  * Crée une session de paiement Stripe générique
  * Body: { priceId, userId, userEmail, type, metadata, successUrl?, cancelUrl? }
  */
-router.post(
-  "/create-checkout-session",
-  validateRequest(validationSchemas.checkoutSession),
-  async (req, res) => {
-    const {
-      priceId,
-      userId,
-      userEmail,
-      type, // 'membership', 'training', 'prevention', etc.
-      metadata = {},
-      successUrl,
-      cancelUrl,
-    } = req.body;
+router.post("/create-checkout-session", async (req, res) => {
+  const {
+    priceId,
+    userId,
+    userEmail,
+    type, // 'membership', 'training', 'prevention', etc.
+    metadata = {},
+    successUrl,
+    cancelUrl,
+  } = req.body;
 
-    logWithTimestamp("info", "=== CRÉATION SESSION CHECKOUT GÉNÉRIQUE ===", {
-      priceId,
-      userId,
-      type,
-      userEmail,
-    });
+  logWithTimestamp("info", "=== CRÉATION SESSION CHECKOUT GÉNÉRIQUE ===", {
+    priceId,
+    userId,
+    type,
+    userEmail,
+  });
 
-    try {
+  try {
+    // Validation des données requises
+    if (!priceId || !userId || !userEmail || !type) {
+      return res.status(400).json({
+        error: "priceId, userId, userEmail et type sont requis",
+      });
+    }
 
     const session = await createCheckoutSession({
       priceId,
@@ -125,10 +127,7 @@ router.post(
  * Traite le succès d'un paiement générique
  * Body: { sessionId }
  */
-router.post(
-  "/process-payment-success",
-  validateRequest(validationSchemas.paymentSuccess),
-  async (req, res) => {
+router.post("/process-payment-success", async (req, res) => {
   const { sessionId } = req.body;
 
   logWithTimestamp("info", "=== TRAITEMENT SUCCÈS PAIEMENT GÉNÉRIQUE ===");
@@ -167,10 +166,7 @@ router.post(
  * GET /receipt/:invoiceId
  * Récupère un reçu ou une facture
  */
-router.get(
-  "/receipt/:invoiceId",
-  validateRequest(validationSchemas.invoiceId),
-  async (req, res) => {
+router.get("/receipt/:invoiceId", async (req, res) => {
   const { invoiceId } = req.params;
 
   logWithTimestamp("info", "=== RÉCUPÉRATION REÇU ===", {
@@ -255,10 +251,7 @@ router.post("/create-invoice", async (req, res) => {
  * GET /payment-intent/:paymentIntentId
  * Récupère les détails d'un payment intent
  */
-router.get(
-  "/payment-intent/:paymentIntentId",
-  validateRequest(validationSchemas.paymentIntentId),
-  async (req, res) => {
+router.get("/payment-intent/:paymentIntentId", async (req, res) => {
   const { paymentIntentId } = req.params;
 
   logWithTimestamp("info", "=== RÉCUPÉRATION PAYMENT INTENT ===", {
@@ -293,7 +286,6 @@ router.get(
  */
 router.post(
   "/create-payment-attestation/:paymentIntentId",
-  validateRequest(validationSchemas.paymentIntentId),
   async (req, res) => {
     const { paymentIntentId } = req.params;
 
