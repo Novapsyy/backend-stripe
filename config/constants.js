@@ -38,10 +38,17 @@ const TRAININGS = {
 // Origines autorisées pour CORS
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
+  /**
+   * Origines locales pour développement
+   */
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:3002",
   "http://127.0.0.1:5173",
+
+  /**
+   * Origines de production
+   */
   "https://novapsy.info",
   "https://www.novapsy.info",
 ];
