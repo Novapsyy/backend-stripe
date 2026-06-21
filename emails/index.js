@@ -22,6 +22,7 @@ const {
   generateMembershipConfirmationHTML,
   generateAssociationMembershipConfirmationHTML,
   generateTrainingPurchaseConfirmationHTML,
+  generateTrainingRefundHTML,
 } = require("./emailTemplates");
 
 // Membership emails
@@ -31,7 +32,10 @@ const {
 } = require("./membershipEmails");
 
 // Training emails
-const { sendTrainingPurchaseConfirmationEmail } = require("./trainingEmails");
+const {
+  sendTrainingPurchaseConfirmationEmail,
+  sendTrainingRefundEmail,
+} = require("./trainingEmails");
 
 // Contact emails
 const { sendContactEmail } = require("./contactEmails");
@@ -66,11 +70,13 @@ module.exports = {
   generateMembershipConfirmationHTML,
   generateAssociationMembershipConfirmationHTML,
   generateTrainingPurchaseConfirmationHTML,
+  generateTrainingRefundHTML,
 
   // Business functions
   sendMembershipConfirmationEmail,
   sendAssociationMembershipConfirmationEmail,
   sendTrainingPurchaseConfirmationEmail,
+  sendTrainingRefundEmail,
   sendContactEmail,
   sendPreventionRequest,
   testPreventionRequest,

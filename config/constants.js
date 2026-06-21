@@ -35,6 +35,14 @@ const TRAININGS = {
   },
 };
 
+// Règles de remboursement des formations
+const REFUND_RULES = {
+  FULL_REFUND_DAYS: 31,    // >= 31 jours avant : 100% remboursé
+  PARTIAL_REFUND_DAYS: 16, // 16-30 jours avant : 80% remboursé
+  PARTIAL_REFUND_PERCENT: 80,
+  NO_REFUND_DAYS: 15,      // <= 15 jours avant : 0% remboursé
+};
+
 // Origines autorisées pour CORS
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
@@ -44,6 +52,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:3002",
+  "http://localhost:3003",
   "http://127.0.0.1:5173",
 
   /**
@@ -60,4 +69,5 @@ module.exports = {
   PRICES,
   TRAININGS,
   ALLOWED_ORIGINS,
+  REFUND_RULES,
 };

@@ -12,6 +12,7 @@ const {
   createTrainingPurchase,
   checkTrainingPurchase,
   getTrainingDetailsForUser,
+  cancelTrainingPurchase,
 } = require("./trainingService");
 
 const router = express.Router();
@@ -242,6 +243,37 @@ router.get("/training-details/:priceId/:userId", async (req, res) => {
       error: error.message,
     });
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /cancel-training/:purchaseId
+ * Annule un achat de formation et émet un remboursement selon les règles métier :
+ * - >= 31 jours avant la session : 100% remboursé
+ * - 16-30 jours avant la session : 80% remboursé
+ * - <= 15 jours avant la session : 0% remboursé
+ * Body: { userId }
+ */
+router.post("/cancel-training/:purchaseId", async (req, res) => {
+  const { purchaseId } = req.params;
+  const { userId } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "userId manquant" });
+  if (!purchaseId) return res.status(400).json({ error: "purchaseId manquant" });
+
+  logWithTimestamp("info", "=== ANNULATION FORMATION ===", { purchaseId, userId });
+
+  try {
+    const result = await cancelTrainingPurchase(Number(purchaseId), userId);
+    res.status(200).json(result);
+  } catch (error) {
+    const status = error.status || 500;
+    logWithTimestamp("error", "Erreur annulation formation", {
+      purchaseId,
+      userId,
+      error: error.message,
+    });
+    res.status(status).json({ error: error.message });
   }
 });
 
